@@ -1,0 +1,912 @@
+<?php
+
+declare(strict_types=1);
+
+require_once __DIR__ . '/filter_widget.php';
+require_once __DIR__ . '/radar_data.php';
+require_once __DIR__ . '/radar_special_completion.php';
+
+/** Bytecode helpers kept separate from the established map generator. */
+function RadarExprSize(object $e): int
+{
+    $token = explode(',', substr($e->{'$type'}, strrpos($e->{'$type'}, '.') + 1))[0];
+    return match ($token) {
+        'EX_FloatConst' => 5,
+        'EX_RotationConst', 'EX_VectorConst' => 13,
+        'EX_Nothing', 'EX_Self', 'EX_True', 'EX_False', 'EX_EndOfScript' => 1,
+        'EX_IntConst', 'EX_Jump' => 5,
+        'EX_ByteConst' => 2,
+        'EX_NameConst', 'EX_InstanceDelegate' => 13,
+        'EX_StringConst' => 2 + strlen($e->Value),
+        'EX_ObjectConst', 'EX_LocalVariable', 'EX_LocalOutVariable', 'EX_InstanceVariable' => 9,
+        'EX_CallMath', 'EX_FinalFunction', 'EX_LocalFinalFunction' => 10 + array_sum(array_map('RadarExprSize', $e->Parameters)),
+        'EX_VirtualFunction' => 14 + array_sum(array_map('RadarExprSize', $e->Parameters)),
+        'EX_CallMulticastDelegate' => 10 + RadarExprSize($e->Delegate) + array_sum(array_map('RadarExprSize', $e->Parameters)),
+        'EX_Let' => 9 + RadarExprSize($e->Variable) + RadarExprSize($e->Expression),
+        'EX_LetBool' => 1 + RadarExprSize($e->VariableExpression) + RadarExprSize($e->AssignmentExpression),
+        'EX_JumpIfNot' => 5 + RadarExprSize($e->BooleanExpression),
+        'EX_Context' => 13 + RadarExprSize($e->ObjectExpression) + RadarExprSize($e->ContextExpression),
+        'EX_DynamicCast' => 9 + RadarExprSize($e->TargetExpression),
+        'EX_StructMemberContext' => 9 + RadarExprSize($e->StructExpression),
+        'EX_Return' => 1 + RadarExprSize($e->ReturnExpression),
+        default => throw new RuntimeException('Unsupported radar expression ' . $token),
+    };
+}
+
+function RadarCompile(array $parts): array
+{
+    $labels = [];
+    $offset = 0;
+    foreach ($parts as $part) {
+        if (is_array($part)) { $labels[$part['label']] = $offset; }
+        else { $offset += RadarExprSize($part); }
+    }
+    $result = [];
+    foreach ($parts as $part) {
+        if (is_array($part)) { continue; }
+        if (isset($part->__target)) {
+            if (!isset($labels[$part->__target])) { throw new RuntimeException('Missing radar label ' . $part->__target); }
+            $part->CodeOffset = $labels[$part->__target];
+            unset($part->__target);
+        }
+        $result[] = $part;
+    }
+    return $result;
+}
+
+function RadarContext(object $object, object $expression, ?object $pointer = null): object
+{
+    $pointer ??= (object)['$type' => 'UAssetAPI.Kismet.Bytecode.KismetPropertyPointer, UAssetAPI', 'New' => (object)[
+        '$type' => 'UAssetAPI.UnrealTypes.FFieldPath, UAssetAPI', 'Path' => [], 'ResolvedOwner' => 0,
+    ]];
+    return FilterExpr('Context', ['ObjectExpression' => $object, 'Offset' => RadarExprSize($expression),
+        'RValuePointer' => $pointer, 'ContextExpression' => $expression]);
+}
+
+/** A small assembler for an independent UserWidget, with no map/HUD imports. */
+final class RadarWidgetBuilder
+{
+    public object $asset;
+    public object $class;
+    public object $default;
+    public array $templates = [];
+    public array $native = [];
+    public array $functions = [];
+    public array $functionLocals = [];
+    private object $normal;
+    private object $functionTemplate;
+    private array $classes = [];
+    public int $tree = 3;
+    public int $root = 4;
+
+    public function __construct(object $base)
+    {
+        $byName = array_column($base->Exports, null, 'ObjectName');
+        foreach ($base->Exports as $export) {
+            foreach ($export->LoadedProperties ?? [] as $p) { $this->templates[$p->SerializedType] ??= $p; }
+        }
+        $this->templates['IntProperty'] = $base->Exports[0]->LoadedProperties[0];
+        $this->asset = unserialize(serialize($base));
+        $this->asset->Exports = [];
+        $this->asset->Imports = [];
+        $this->asset->DependsMap = [];
+        $this->asset->SoftPackageReferenceList = [];
+        $this->asset->NameMap = ['None', '/Game/SaveStats/WBP_SSOverlayRadar'];
+        $this->asset->PackageGuid = '{8C96B11B-6257-4F1D-83AC-66943A2A1E60}';
+        $this->functionTemplate = unserialize(serialize($byName['OnNextZoneClicked']));
+        $this->normal = unserialize(serialize($byName['WidgetTree']));
+        foreach (['CoreUObject', 'Engine', 'UMG', 'InputCore', 'IslandsofInsight'] as $p) {
+            $this->native[$p] = OverlayImport($this->asset, '/Script/' . $p, 0, '/Script/CoreUObject', 'Package');
+        }
+        foreach (['Object' => 'CoreUObject', 'Function' => 'CoreUObject', 'UserWidget' => 'UMG', 'Widget' => 'UMG',
+            'WidgetTree' => 'UMG', 'WidgetBlueprintGeneratedClass' => 'UMG', 'GameplayStatics' => 'Engine',
+            'KismetMathLibrary' => 'Engine', 'KismetArrayLibrary' => 'Engine', 'KismetSystemLibrary' => 'Engine',
+            'KismetTextLibrary' => 'Engine', 'InputSettings' => 'Engine', 'PlayerController' => 'Engine', 'Actor' => 'Engine', 'Pawn' => 'Engine',
+            'SubsystemBlueprintLibrary' => 'Engine', 'GISProgression' => 'IslandsofInsight', 'SophiaHUD' => 'IslandsofInsight', 'SophiaCharacter' => 'IslandsofInsight'] as $c => $p) {
+            $this->native[$c] = OverlayImport($this->asset, $c, $this->native[$p], '/Script/CoreUObject', 'Class');
+        }
+        foreach (['Vector', 'Rotator'] as $s) { $this->native[$s] = OverlayImport($this->asset, $s, $this->native['CoreUObject'], '/Script/CoreUObject', 'ScriptStruct'); }
+        $this->native['TimerHandle'] = OverlayImport($this->asset, 'TimerHandle', $this->native['Engine'], '/Script/CoreUObject', 'ScriptStruct');
+        $this->native['InputActionKeyMapping'] = OverlayImport($this->asset, 'InputActionKeyMapping', $this->native['Engine'], '/Script/CoreUObject', 'ScriptStruct');
+        $this->native['Key'] = OverlayImport($this->asset, 'Key', $this->native['InputCore'], '/Script/CoreUObject', 'ScriptStruct');
+        $this->native['PuzzleSolveData'] = OverlayImport($this->asset, 'PuzzleSolveData', $this->native['IslandsofInsight'], '/Script/CoreUObject', 'ScriptStruct');
+        $class = unserialize(serialize($byName['WBP_LargeMap_C']));
+        $class->{'$index'} = 1;
+        $class->ObjectName = 'WBP_SSOverlayRadar_C';
+        $class->ClassIndex = $this->native['WidgetBlueprintGeneratedClass'];
+        $class->TemplateIndex = OverlayImport($this->asset, 'Default__WidgetBlueprintGeneratedClass', $this->native['UMG'], '/Script/UMG', 'WidgetBlueprintGeneratedClass');
+        $class->ClassWithin = $this->native['Object'];
+        $class->SuperStruct = $class->SuperIndex = $this->native['UserWidget'];
+        $class->ClassDefaultObject = 2;
+        $class->Interfaces = [];
+        $class->FuncMap = $class->Children = $class->LoadedProperties = [];
+        $class->Data = [OverlayProperty('Object', 'WidgetTree', 3), OverlayProperty('Bool', 'bClassRequiresNativeTick', 0)];
+        $class->SerializationBeforeSerializationDependencies = [$this->native['UserWidget']];
+        $class->CreateBeforeSerializationDependencies = [3];
+        $class->SerializationBeforeCreateDependencies = [$class->ClassIndex, $class->TemplateIndex];
+        $class->CreateBeforeCreateDependencies = [$this->native['UserWidget']];
+        $class->Extras = '';
+        $this->class = $class;
+        $defaultNative = OverlayImport($this->asset, 'Default__UserWidget', $this->native['UMG'], '/Script/UMG', 'UserWidget');
+        $this->default = OverlayExport($this->normal, 2, 'Default__WBP_SSOverlayRadar_C', 0, 1, $defaultNative, [
+            FilterEnum('Visibility', 'ESlateVisibility', 'HitTestInvisible'), OverlayProperty('Bool', 'bIsFocusable', 0),
+            OverlayProperty('Bool', 'bHasScriptImplementedTick', 0), OverlayProperty('Bool', 'bHasScriptImplementedPaint', 0),
+        ]);
+        $this->default->ObjectFlags = 'RF_Public, RF_ClassDefaultObject, RF_ArchetypeObject';
+        $this->default->CreateBeforeCreateDependencies = [];
+        $treeNative = OverlayImport($this->asset, 'Default__WidgetTree', $this->native['UMG'], '/Script/UMG', 'WidgetTree');
+        $tree = OverlayExport($this->normal, 3, 'WidgetTree', 1, $this->native['WidgetTree'], $treeNative, [OverlayProperty('Object', 'RootWidget', 4)]);
+        $tree->CreateBeforeSerializationDependencies = [4];
+        $this->asset->Exports = [$class, $this->default, $tree];
+        $this->widget('CanvasPanel', 'SSRadarCanvas', [FilterArray('Slots', []), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed')]);
+        $this->objectField('SSRadarCanvas', $this->classes['CanvasPanel'][0]);
+        foreach (['Function', 'UserWidget', 'WidgetTree'] as $name) { $this->name($name); }
+    }
+
+    public function name(string $name): void { if ($name !== '') { $this->asset->NameMap[] = $name; $this->asset->NameMap[] = preg_replace('/_[0-9]+$/', '', $name); } }
+    public function field(string $kind, string $name, string $flags = 'CPF_None'): object
+    {
+        $type = $kind . 'Property';
+        $p = unserialize(serialize($this->templates[$type] ?? $this->templates['IntProperty']));
+        $fieldClass = in_array($kind, ['Int', 'Float', 'Name', 'Text', 'Str'], true) ? 'Generic' : $kind;
+        $p->{'$type'} = 'UAssetAPI.FieldTypes.F' . $fieldClass . 'Property, UAssetAPI';
+        $p->SerializedType = $type;
+        $p->Name = $name;
+        $p->PropertyFlags = $flags;
+        $p->Flags = 'RF_Public';
+        $p->ElementSize = match ($kind) { 'Bool', 'Byte' => 1, 'Name', 'Object' => 8, 'Array', 'Str' => 16, 'Text' => 24, 'Struct' => 12, default => 4 };
+        if ($kind === 'Byte') { $p->Enum = 0; }
+        $this->name($name); $this->name($type);
+        return $p;
+    }
+    public function scalar(string $kind, string $name, mixed $value): void
+    {
+        $this->class->LoadedProperties[] = $this->field($kind, $name, 'CPF_BlueprintVisible');
+        $this->default->Data[] = OverlayProperty($kind, $name, $value);
+    }
+    public function structField(string $name, string $type, int $size, array $values): void
+    {
+        $p = $this->field('Struct', $name);
+        $p->Struct = $this->native[$type];
+        $p->ElementSize = $size;
+        $this->class->LoadedProperties[] = $p;
+        $this->default->Data[] = FilterStruct($name, $type, $values);
+    }
+    public function arrayField(string $kind, string $name, array $values): void
+    {
+        $p = $this->field('Array', $name);
+        $p->Inner = $this->field($kind, $name);
+        $this->class->LoadedProperties[] = $p;
+        $v = OverlayProperty('Array', $name, array_map(static fn($x): object => OverlayProperty($kind, '0', $x), $values));
+        $v->ArrayType = $kind . 'Property';
+        $this->default->Data[] = $v;
+    }
+    public function objectField(string $name, int $nativeClass): void
+    {
+        $p = $this->field('Object', $name, 'CPF_BlueprintVisible, CPF_ExportObject, CPF_InstancedReference, CPF_RepSkip, CPF_PersistentInstance');
+        $p->PropertyClass = $nativeClass;
+        $this->class->LoadedProperties[] = $p;
+    }
+    public function widget(string $kind, string $name, array $data): int
+    {
+        if (!isset($this->classes[$kind])) {
+            $this->classes[$kind] = [OverlayImport($this->asset, $kind, $this->native['UMG'], '/Script/CoreUObject', 'Class'),
+                OverlayImport($this->asset, 'Default__' . $kind, $this->native['UMG'], '/Script/UMG', $kind)];
+        }
+        [$class, $default] = $this->classes[$kind];
+        $index = count($this->asset->Exports) + 1;
+        $export = OverlayExport($this->normal, $index, $name, $this->tree, $class, $default, $data);
+        $export->Extras = '';
+        $this->asset->Exports[] = $export;
+        $this->name($name);
+        return $index;
+    }
+    public function child(string $kind, string $name, array $data, float $x, float $y, float $w, float $h): int
+    {
+        $child = $this->widget($kind, $name, $data);
+        $slot = $this->widget('CanvasPanelSlot', $name . 'Slot', [
+            FilterStruct('LayoutData', 'AnchorData', [FilterStruct('Offsets', 'Margin', [OverlayProperty('Float', 'Left', $x), OverlayProperty('Float', 'Top', $y), OverlayProperty('Float', 'Right', $w), OverlayProperty('Float', 'Bottom', $h)]), FilterStruct('Anchors', 'Anchors', [FilterVector('Minimum', 0, 0), FilterVector('Maximum', 0, 0)]), FilterVector('Alignment', 0.5, 0.5)]),
+            OverlayProperty('Object', 'Parent', $this->root), OverlayProperty('Object', 'Content', $child),
+        ]);
+        $this->asset->Exports[$slot - 1]->OuterIndex = $this->root;
+        $this->asset->Exports[$child - 1]->Data[] = OverlayProperty('Object', 'Slot', $slot);
+        $this->asset->Exports[$this->root - 1]->Data[0]->Value[] = OverlayProperty('Object', '0', $slot);
+        $this->objectField($name, $this->classes[$kind][0]);
+        return $child;
+    }
+    public function importMethod(string $owner, string $method): int
+    {
+        if (!isset($this->native[$owner])) { $this->native[$owner] = OverlayImport($this->asset, $owner, $this->native['UMG'], '/Script/CoreUObject', 'Class'); }
+        return $this->native[$owner . '.' . $method] ??= OverlayImport($this->asset, $method, $this->native[$owner], '/Script/CoreUObject', 'Function');
+    }
+    public function call(string $owner, string $method, array $args = []): object { return FilterCall($this->importMethod($owner, $method), $args); }
+    public function method(object $object, string $owner, string $method, array $args = [], ?object $pointer = null): object
+    { return RadarContext($object, FilterCall($this->importMethod($owner, $method), $args, 'FinalFunction'), $pointer); }
+    public function reserve(string $name): int
+    {
+        $i = count($this->asset->Exports) + 1;
+        $this->functions[$name] = $i;
+        $this->asset->Exports[] = (object)[];
+        $this->name($name);
+        return $i;
+    }
+    public function define(string $name, array $parameters, array $locals, array $parts, ?string $event = null, ?string $returnType = null): void
+    {
+        $i = $this->functions[$name];
+        $properties = [];
+        foreach ($parameters as $n => $kind) {
+            $p = $this->field($kind, $n, 'CPF_Parm');
+            if ($kind === 'Object') { $p->PropertyClass = $this->native['Object']; }
+            $properties[] = $p;
+        }
+        if ($returnType !== null) {
+            if ($returnType !== 'Bool') { throw new InvalidArgumentException('Unsupported radar result type.'); }
+            $properties[] = $this->field($returnType, 'ReturnValue', 'CPF_Parm, CPF_OutParm, CPF_ReturnParm');
+        }
+        foreach ($locals as $n => $kind) {
+            $p = $this->field($kind, $n);
+            if ($kind === 'Object') { $p->PropertyClass = $this->native['Object']; }
+            if ($kind === 'Struct') {
+                $struct = match ($n) { 'PlayerRotation' => 'Rotator', 'Timer' => 'TimerHandle', 'Transform' => 'WidgetTransform', 'Translation' => 'Vector2D', 'InputMapping' => 'InputActionKeyMapping', 'InputKey' => 'Key', 'PuzzleStatus' => 'PuzzleSolveData', default => 'Vector' };
+                $p->Struct = $this->native[$struct];
+                $p->ElementSize = match ($struct) { 'TimerHandle', 'Vector2D' => 8, 'WidgetTransform' => 28, 'InputActionKeyMapping' => 48, 'Key' => 32, 'PuzzleSolveData' => 40, default => 12 };
+            }
+            $properties[] = $p;
+        }
+        $end = $returnType === 'Bool'
+            ? [FilterExpr('Return', ['ReturnExpression' => FilterExpr('False')]), FilterExpr('EndOfScript')]
+            : FilterReturn();
+        $code = RadarCompile([...$parts, ...$end]);
+        $fn = FilterFunction($this->functionTemplate, $i, 1, $name, $properties, []);
+        $fn->ClassIndex = $this->native['Function'];
+        $fn->TemplateIndex = OverlayImport($this->asset, 'Default__Function', $this->native['CoreUObject'], '/Script/CoreUObject', 'Function');
+        $fn->SerializationBeforeCreateDependencies = [$fn->ClassIndex, $fn->TemplateIndex];
+        $fn->ScriptBytecode = $code;
+        $fn->ScriptBytecodeSize = array_sum(array_map('RadarExprSize', $code));
+        if ($returnType !== null) { $fn->FunctionFlags .= ', FUNC_HasOutParms'; }
+        if ($event !== null) {
+            $fn->SuperStruct = $fn->SuperIndex = $this->importMethod('UserWidget', $event);
+            $fn->FunctionFlags = 'FUNC_Event, FUNC_Protected, FUNC_BlueprintEvent';
+            $fn->SerializationBeforeSerializationDependencies = [$fn->SuperStruct];
+        }
+        $this->asset->Exports[$i - 1] = $fn;
+        $this->class->FuncMap[] = [$name, $i];
+        $this->class->Children[] = $i;
+        $this->class->CreateBeforeSerializationDependencies[] = $i;
+    }
+    public function finish(): object
+    {
+        // Every reference in the cooked widget tree needs an EDL dependency.
+        foreach ($this->asset->Exports as $export) {
+            $this->name($export->ObjectName);
+            $visit = function (mixed $value) use (&$visit, $export): void {
+                if (is_object($value)) {
+                    if (($value->{'$type'} ?? '') === 'UAssetAPI.PropertyTypes.Objects.ObjectPropertyData, UAssetAPI' && ($value->Value ?? 0) > 0) { $export->CreateBeforeSerializationDependencies[] = $value->Value; }
+                    foreach ((array)$value as $child) { $visit($child); }
+                } elseif (is_array($value)) { foreach ($value as $child) { $visit($child); } }
+            };
+            $visit($export->Data ?? []);
+            $export->CreateBeforeSerializationDependencies = array_values(array_unique($export->CreateBeforeSerializationDependencies ?? []));
+        }
+        foreach ($this->asset->Imports as $import) { $this->name($import->ObjectName); $this->name($import->ClassPackage); $this->name($import->ClassName); }
+        $this->name('Engine');
+        foreach (['IntProperty', 'FloatProperty', 'NameProperty', 'TextProperty', 'ObjectProperty', 'EnumProperty', 'StructProperty', 'BoolProperty', 'ArrayProperty'] as $type) { $this->name($type); }
+        $walk = function (mixed $value) use (&$walk): void {
+            if (is_object($value)) {
+                foreach (['Name', 'StructType', 'EnumType', 'SerializedType', 'ArrayType', 'FunctionName', 'VirtualFunctionName', 'PropertyName'] as $k) { if (isset($value->$k) && is_string($value->$k)) { $this->name($value->$k); } }
+                if (isset($value->Value) && is_string($value->Value) && preg_match('/(?:NameConst|NamePropertyData|EnumPropertyData)/', $value->{'$type'} ?? '')) { $this->name($value->Value); }
+                if (isset($value->Path)) { foreach ($value->Path as $n) { $this->name($n); } }
+                foreach ((array)$value as $child) { $walk($child); }
+            } elseif (is_array($value)) { foreach ($value as $child) { $walk($child); } }
+        };
+        $walk($this->asset->Exports);
+        $this->asset->NameMap = array_values(array_unique($this->asset->NameMap));
+        $this->asset->DependsMap = array_fill(0, count($this->asset->Exports), []);
+        return $this->asset;
+    }
+}
+
+function BuildRadarWidget(object $base, array $index): array
+{
+    if (($index['schemaVersion'] ?? null) !== 1 || !isset($index['pointRanks'], $index['puzzleIds'], $index['pentadRelicIndices'], $index['hubAvailabilityZones'])
+        || count($index['puzzleIds']) !== count($index['positions']) || count($index['pentadRelicIndices']) !== count($index['positions'])
+        || count($index['hubAvailabilityZones']) !== count($index['positions'])) {
+        throw new InvalidArgumentException('Expected radar index schema1 with stable ranks, parallel puzzle IDs, Pentad relic indices and Hub availability zones.');
+    }
+    $hubPuzzleIds = $hubTypeTags = $hubZones = [];
+    $hubPoints = 0;
+    foreach ($index['typeKeys'] as $type => $key) {
+        $first = $index['offsets'][$type * $index['width'] * $index['height']];
+        $end = $index['offsets'][($type + 1) * $index['width'] * $index['height']];
+        foreach (range($first, max($first, $end - 1)) as $point) {
+            if ($point >= $end) { break; }
+            $zone = $index['hubAvailabilityZones'][$point];
+            if (!is_int($zone) || !in_array($zone, [0, 2, 3, 4, 5, 6], true)) { throw new InvalidArgumentException('Radar Hub availability zones must be zero or2 through6.'); }
+            if ($zone > 0) { $hubPoints++; $hubPuzzleIds[$index['puzzleIds'][$point]] = true; $hubTypeTags['SaveStats.Type.' . $key] = true; $hubZones[$zone] = true; }
+        }
+    }
+    $pentadParts = $pentadPoints = [];
+    foreach ($index['pentadRelicIndices'] as $point => $relic) {
+        if (!is_int($relic) || $relic < 0 || $relic > 5) { throw new InvalidArgumentException('Pentad relic indices must be integers from 0 through 5.'); }
+        if ($relic > 0 && $index['puzzleIds'][$point] > 0) {
+            $pentadParts[$index['puzzleIds'][$point]][] = $relic;
+            $pentadPoints[$index['puzzleIds'][$point]][$relic] = $point;
+        }
+    }
+    $pentadIds = [];
+    foreach ($pentadParts as $pid => $parts) {
+        sort($parts, SORT_NUMERIC);
+        if ($parts === [1, 2, 3, 4, 5]) { $pentadIds[] = $pid; }
+    }
+    sort($pentadIds, SORT_NUMERIC);
+    $pentadLocal = ['Known' => [], 'X' => [], 'Y' => [], 'Z' => []];
+    foreach ($pentadIds as $pid) {
+        foreach (range(1, 5) as $relic) {
+            $position = $index['pentadLocalPositions'][$pentadPoints[$pid][$relic]] ?? null;
+            $pentadLocal['Known'][] = $position === null ? 0 : 1;
+            $position = $position === null ? ['x' => 0, 'y' => 0, 'z' => 0] : RadarPosition($position);
+            foreach (['X', 'Y', 'Z'] as $axis) { $pentadLocal[$axis][] = $position[strtolower($axis)]; }
+        }
+    }
+    $b = new RadarWidgetBuilder($base);
+    foreach (['CharPuzzleComponent', 'Seek5', 'PuzzleBase', 'Seek5HiddenObject'] as $nativeClass) {
+        $b->native[$nativeClass] = OverlayImport($b->asset, $nativeClass, $b->native['IslandsofInsight'], '/Script/CoreUObject', 'Class');
+    }
+    $b->native['SceneComponent'] = OverlayImport($b->asset, 'SceneComponent', $b->native['Engine'], '/Script/CoreUObject', 'Class');
+    foreach (['SophiaGameplayStatics', 'PuzzleDatabase', 'PuzzleData'] as $nativeClass) { $b->native[$nativeClass] = OverlayImport($b->asset, $nativeClass, $b->native['IslandsofInsight'], '/Script/CoreUObject', 'Class'); }
+    foreach (['GameModeBase', 'KismetStringLibrary'] as $nativeClass) { $b->native[$nativeClass] = OverlayImport($b->asset, $nativeClass, $b->native['Engine'], '/Script/CoreUObject', 'Class'); }
+    $f = static fn(float $n): object => FilterExpr('FloatConst', ['Value' => $n]);
+    $i = static fn(int $n): object => FilterExpr('IntConst', ['Value' => $n]);
+    $state = static fn(string $n): object => FilterVariable(1, $n, true);
+    $math = static fn(string $fn, object ...$args): object => $b->call('KismetMathLibrary', $fn, $args);
+    $array = static fn(string $fn, object ...$args): object => $b->call('KismetArrayLibrary', $fn, $args);
+    $set = static fn(string $n, object $v): object => FilterExpr('Let', ['Value' => FilterPointer(1, $n), 'Variable' => $state($n), 'Expression' => $v]);
+    $setBool = static fn(string $n, object $v): object => FilterExpr('LetBool', ['VariableExpression' => $state($n), 'AssignmentExpression' => $v]);
+    $jump = static fn(string $label): object => FilterExpr('Jump', ['CodeOffset' => 0, '__target' => $label]);
+    $unless = static fn(object $condition, string $label): object => FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => $label, 'BooleanExpression' => $condition]);
+    $localCall = static fn(string $fn, array $args = []): object => FilterCall($b->functions[$fn], $args, 'LocalFinalFunction');
+    $visible = static fn(string $name, int $value): object => $b->method($state($name), 'Widget', 'SetVisibility', [FilterExpr('ByteConst', ['Value' => $value])]);
+    $bool = static fn(bool $value): object => FilterExpr($value ? 'True' : 'False');
+    foreach (['SSRadarSelectedTag' => 'None'] as $name => $value) { $b->scalar('Name', $name, $value); }
+    foreach (['SSRadarIncludeSites' => false, 'SSRadarEnabled' => true, 'SSRadarDirty' => true, 'SSRadarScanActive' => false,
+        'SSRadarProgressAvailable' => false, 'SSRadarMapProgressDirty' => true] as $n => $v) { $b->scalar('Bool', $n, $v ? 1 : 0); }
+    foreach (range(1, 5) as $relic) { $b->scalar('Bool', 'SSRadarPentadFound' . $relic, 0); }
+    $b->scalar('Bool', 'SSRadarAvailabilityReady', 0);
+    $b->scalar('Name', 'SSRadarAvailabilityTag', 'None');
+    $b->objectField('SSRadarAvailabilitySource', $b->native['PuzzleDatabase']);
+    $b->objectField('SSRadarAvailabilityWorld', $b->native['GameModeBase']);
+    $b->objectField('SSRadarAvailabilityPlayer', $b->native['SophiaCharacter']);
+    foreach (['SSRadarAvailabilityZoneCursor' => 2, 'SSRadarAvailabilityLifespan' => 0, 'SSRadarAvailabilityQueriesLastRefresh' => 0, 'SSRadarAvailabilityQueriesTotal' => 0] as $n => $v) { $b->scalar('Int', $n, $v); }
+    foreach (range(2, 6) as $zone) {
+        $b->scalar('Bool', 'SSRadarAvailabilityZoneReady' . $zone, 0);
+        $b->arrayField('Object', 'SSRadarAvailableZone' . $zone, []);
+        $b->class->LoadedProperties[array_key_last($b->class->LoadedProperties)]->Inner->PropertyClass = $b->native['PuzzleData'];
+    }
+    $b->arrayField('Name', 'SSRadarHubTypeTags', array_keys($hubTypeTags));
+    $b->objectField('SSRadarPentadActor', $b->native['Seek5']);
+    foreach (range(1, 5) as $relic) { $b->objectField('SSRadarPentadObject' . $relic, $b->native['Seek5HiddenObject']); }
+    $b->objectField('SSRadarProgressSource', $b->native['GISProgression']);
+    $b->objectField('SSRadarProgressPlayer', $b->native['SophiaCharacter']);
+    foreach (['SSRadarTypeIndex' => -1, 'SSRadarCellX' => 2147483647, 'SSRadarCellY' => 2147483647, 'SSRadarRow' => 0, 'SSRadarMaxRow' => -1,
+        'SSRadarMinCol' => 0, 'SSRadarMaxCol' => -1, 'SSRadarCursor' => 0, 'SSRadarEnd' => 0, 'SSRadarVisitedLastUpdate' => 0, 'SSRadarVisitedTotal' => 0,
+        'SSRadarZoomIndex' => 1, 'SSRadarSizeIndex' => 1, 'SSRadarRevision' => 0, 'SSRadarProgressQueriesTotal' => 0,
+        'SSRadarFocusPuzzleId' => 0] as $n => $v) { $b->scalar('Int', $n, $v); }
+    foreach (['SSRadarPlayerX', 'SSRadarPlayerY', 'SSRadarPlayerZ', 'SSRadarYaw', 'SSRadarScanX', 'SSRadarScanY', 'SSRadarWait'] as $n) { $b->scalar('Float', $n, 0); }
+    $b->scalar('Float', 'SSRadarRadiusCm', 10000);
+    $shortcuts = ['Toggle' => ['F8', 'SSRadarInputToggle'], 'ZoomIn' => ['F3', 'SSRadarInputZoomIn'], 'ZoomOut' => ['F4', 'SSRadarInputZoomOut'], 'Size' => ['F10', 'SSRadarInputSize']];
+    foreach ($shortcuts as $action => [$key]) {
+        $b->structField('SSRadarKey' . $action, 'InputActionKeyMapping', 48, [OverlayProperty('Name', 'ActionName', 'SaveStatsRadar' . $action),
+            OverlayProperty('Bool', 'bShift', 0), OverlayProperty('Bool', 'bCtrl', 0), OverlayProperty('Bool', 'bAlt', 0), OverlayProperty('Bool', 'bCmd', 0),
+            FilterStruct('Key', 'Key', [OverlayProperty('Name', 'KeyName', $key)])]);
+    }
+    foreach (['SSRadarOffsets' => $index['offsets'], 'SSRadarSpawn' => $index['isSpawn'], 'SSRadarRanks' => $index['pointRanks'], 'SSRadarPuzzleIds' => $index['puzzleIds'], 'SSRadarBestIndices' => [], 'SSRadarDisplayIndices' => []] as $n => $v) { $b->arrayField('Int', $n, $v); }
+    $b->arrayField('Int', 'SSRadarPentadRelicIndices', $index['pentadRelicIndices']);
+    $b->arrayField('Int', 'SSRadarHubAvailabilityZones', $index['hubAvailabilityZones']);
+    $b->arrayField('Int', 'SSRadarPentadIds', $pentadIds);
+    foreach ($pentadLocal as $axis => $values) { $b->arrayField($axis === 'Known' ? 'Int' : 'Float', 'SSRadarPentadLocal' . $axis, $values); }
+    foreach (['x', 'y', 'z'] as $axis) { $b->arrayField('Float', 'SSRadar' . strtoupper($axis), array_column($index['positions'], $axis)); }
+    $b->arrayField('Float', 'SSRadarBestDistances', []);
+    $b->arrayField('Name', 'SSRadarTypeTags', array_map(static fn(string $key): string => 'SaveStats.Type.' . $key, $index['typeKeys']));
+    $texture = static function (string $name) use ($b): int {
+        $package = OverlayImport($b->asset, '/Game/ASophia/UI/HUD/Markers/Textures/' . $name, 0, '/Script/CoreUObject', 'Package');
+        return OverlayImport($b->asset, $name, $package, '/Script/Engine', 'Texture2D');
+    };
+    $brush = static fn(int $resource): object => FilterStruct('Brush', 'SlateBrush', [FilterVector('ImageSize', 216, 216), OverlayProperty('Object', 'ResourceObject', $resource)]);
+    $b->child('Image', 'SSRadarRing', [$brush($texture('SSRadRing'))], 108, 108, 216, 216);
+    $b->child('Image', 'SSRadarHeading', [$brush($texture('SSRadHead'))], 108, 108, 20, 20);
+    $fontPkg = OverlayImport($b->asset, '/Game/ASophia/UI/Common/Font/lovato_demi_Font', 0, '/Script/CoreUObject', 'Package');
+    $fontObj = OverlayImport($b->asset, 'lovato_demi_Font', $fontPkg, '/Script/Engine', 'Font');
+    $font = static fn(int $size): object => FilterStruct('Font', 'SlateFontInfo', [OverlayProperty('Object', 'FontObject', $fontObj), OverlayProperty('Name', 'TypefaceFontName', 'Default'), OverlayProperty('Int', 'Size', $size)]);
+    $b->child('TextBlock', 'SSRadarCaption', [OverlayText('Text', 'Puzzle radar'), $font(12), FilterEnum('Justification', 'ETextJustify', 'Center')], 108, 232, 232, 24);
+    $b->child('TextBlock', 'SSRadarRange', [OverlayText('Text', '100 m'), $font(10), FilterEnum('Justification', 'ETextJustify', 'Center')], 108, 252, 216, 18);
+    for ($pin = 0; $pin < 24; $pin++) {
+        $b->child('Image', 'SSRadarPin' . $pin, [FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed'), $brush($texture('SSIcon006'))], 108, 108, 20, 20);
+        $b->child('TextBlock', 'SSRadarHeight' . $pin, [OverlayText('Text', ''), $font(11), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed')], 120, 99, 14, 16);
+    }
+    foreach (['SSRadarSetSelection', 'SSRadarSetView', 'SSRadarApplyView', 'SSRadarChangeZoom', 'SSRadarCycleSize', 'SSRadarToggleEnabled', 'SSRadarIsSolved', 'SSRadarAcknowledgeMapProgress',
+        'SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable', 'SSRadarRefreshPentadFocus', 'SSRadarIsPentadRelicVisible', 'SSRadarMatchesPentadFocus', 'SSRadarHandleShortcut', ...array_column($shortcuts, 1), 'SSRadarApplyIcon', 'SSRadarStartScan', 'SSRadarScan', 'SSRadarRender', 'SSRadarUpdate', 'SSRadarTick', 'OnInitialized', 'Construct', 'Destruct'] as $fn) { $b->reserve($fn); }
+    $specialCompletion = AddRadarSpecialCompletion($b, $index['specialCompletions'] ?? []);
+    $makeVec = static fn(object $x, object $y): object => $math('MakeVector2D', $x, $y);
+    $labelText = static fn(string $n, string $text): object => $b->method($state($n), 'TextBlock', 'SetText', [$b->call('KismetTextLibrary', 'Conv_StringToText', [FilterExpr('StringConst', ['Value' => $text])])]);
+    $clear = [$array('Array_Clear', $state('SSRadarDisplayIndices')), $array('Array_Clear', $state('SSRadarBestIndices')), $array('Array_Clear', $state('SSRadarBestDistances')),
+        $setBool('SSRadarScanActive', $bool(false)), $setBool('SSRadarDirty', $bool(true)), $visible('SSRadarCanvas', 1)];
+    $revise = static fn(): object => $set('SSRadarRevision', $math('Add_IntInt', $state('SSRadarRevision'), $i(1)));
+    $b->define('SSRadarAcknowledgeMapProgress', [], [], [$setBool('SSRadarMapProgressDirty', $bool(false))]);
+    $fn = $b->functions['SSRadarIsPentadRelicVisible'];
+    $p = static fn(string $n): object => FilterVariable($fn, $n);
+    $relicVisible = [$unless($math('Greater_IntInt', $state('SSRadarFocusPuzzleId'), $i(0)), 'Done'),
+        $unless($math('EqualEqual_IntInt', $p('PuzzleId'), $state('SSRadarFocusPuzzleId')), 'Done')];
+    foreach (range(1, 5) as $relic) {
+        $relicVisible = [...$relicVisible, $unless($math('EqualEqual_IntInt', $p('RelicIndex'), $i($relic)), 'Relic' . ($relic + 1)),
+            FilterExpr('Return', ['ReturnExpression' => $math('Not_PreBool', $state('SSRadarPentadFound' . $relic))]), ['label' => 'Relic' . ($relic + 1)]];
+    }
+    $b->define('SSRadarIsPentadRelicVisible', ['PuzzleId' => 'Int', 'RelicIndex' => 'Int'], [], [...$relicVisible, ['label' => 'Done']], null, 'Bool');
+    $fn = $b->functions['SSRadarMatchesPentadFocus'];
+    $p = static fn(string $n): object => FilterVariable($fn, $n);
+    $b->define('SSRadarMatchesPentadFocus', ['Point' => 'Int', 'PuzzleId' => 'Int'], ['RelicIndex' => 'Int'], [
+        $unless($math('EqualEqual_NameName', $state('SSRadarSelectedTag'), FilterExpr('NameConst', ['Value' => 'SaveStats.Type.seek5'])), 'Other'),
+        $array('Array_Get', $state('SSRadarPentadRelicIndices'), $p('Point'), $p('RelicIndex')),
+        $unless($math('Greater_IntInt', $state('SSRadarFocusPuzzleId'), $i(0)), 'Overview'),
+        FilterExpr('Return', ['ReturnExpression' => $localCall('SSRadarIsPentadRelicVisible', [$p('PuzzleId'), $p('RelicIndex')])]),
+        ['label' => 'Overview'], FilterExpr('Return', ['ReturnExpression' => $math('EqualEqual_IntInt', $p('RelicIndex'), $i(0))]),
+        ['label' => 'Other'], FilterExpr('Return', ['ReturnExpression' => $bool(true)]),
+    ], null, 'Bool');
+    $fn = $b->functions['SSRadarIsSolved'];
+    $p = static fn(string $n): object => FilterVariable($fn, $n);
+    $queryLet = static fn(string $n, object $v): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $v]);
+    $valid = static fn(object $v): object => $b->call('KismetSystemLibrary', 'IsValid', [$v]);
+    $specialDispatch = $specialCompletion['descriptors'] === 0 ? [] : [
+        $unless($math('BooleanAND', $math('GreaterEqual_IntInt', $p('PuzzleId'), $i($specialCompletion['minimumPid'])), $math('LessEqual_IntInt', $p('PuzzleId'), $i($specialCompletion['maximumPid']))), 'Ordinary'),
+        $queryLet('Descriptor', $array('Array_Find', $state('SSRadarSpecialIds'), $p('PuzzleId'))),
+        $unless($math('GreaterEqual_IntInt', $p('Descriptor'), $i(0)), 'Ordinary'),
+        FilterExpr('Return', ['ReturnExpression' => $localCall('SSRadarIsSpecialSolved', [$p('Descriptor'), $p('Source'), $p('Player')])]), ['label' => 'Ordinary']];
+    $b->define('SSRadarIsSolved', ['PuzzleId' => 'Int'], ['Source' => 'Object', 'Player' => 'Object', 'PuzzleStatus' => 'Struct', 'Descriptor' => 'Int'], [
+        $unless($math('Greater_IntInt', $p('PuzzleId'), $i(0)), 'Done'),
+        $queryLet('Source', $state('SSRadarProgressSource')),
+        $unless($math('Not_PreBool', $valid($p('Source'))), 'Player'),
+        $queryLet('Source', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['GISProgression'], 'TargetExpression' => $b->call('SubsystemBlueprintLibrary', 'GetGameInstanceSubsystem', [FilterExpr('Self'), FilterExpr('ObjectConst', ['Value' => $b->native['GISProgression']])])])),
+        $set('SSRadarProgressSource', $p('Source')),
+        ['label' => 'Player'], $queryLet('Player', $state('SSRadarProgressPlayer')),
+        $unless($math('Not_PreBool', $valid($p('Player'))), 'Available'),
+        $queryLet('Player', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['SophiaCharacter'], 'TargetExpression' => $b->call('GameplayStatics', 'GetPlayerCharacter', [FilterExpr('Self'), $i(0)])])),
+        $set('SSRadarProgressPlayer', $p('Player')),
+        ['label' => 'Available'], $setBool('SSRadarProgressAvailable', $math('BooleanAND', $valid($p('Source')), $valid($p('Player')))),
+        $unless($state('SSRadarProgressAvailable'), 'Done'),
+        ...$specialDispatch,
+        $set('SSRadarProgressQueriesTotal', $math('Add_IntInt', $state('SSRadarProgressQueriesTotal'), $i(1))),
+        $queryLet('PuzzleStatus', $b->method($p('Source'), 'GISProgression', 'GetPuzzleSolveStatus', [$p('Player'), $p('PuzzleId'), FilterExpr('StringConst', ['Value' => '']), FilterExpr('StringConst', ['Value' => ''])], FilterPointer($fn, 'PuzzleStatus'))),
+        FilterExpr('Return', ['ReturnExpression' => FilterExpr('StructMemberContext', ['StructMemberExpression' => FilterPointer($b->native['PuzzleSolveData'], 'bSolved'), 'StructExpression' => $p('PuzzleStatus')])]),
+        ['label' => 'Done'],
+    ], null, 'Bool');
+    $fn = $b->functions['SSRadarRefreshAvailability'];
+    $p = static fn(string $n): object => FilterVariable($fn, $n);
+    $availabilityLet = static fn(string $n, object $v): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $v]);
+    $availabilityProperty = static fn(object $object, string $owner, string $name): object => RadarContext($object, FilterVariable($b->native[$owner], $name, true), FilterPointer($b->native[$owner], $name));
+    $database = static fn(): object => FilterExpr('DynamicCast', ['ClassPtr' => $b->native['PuzzleDatabase'], 'TargetExpression' => $b->call('SophiaGameplayStatics', 'GetPuzzleDatabase', [FilterExpr('Self')])]);
+    $worldAnchor = static fn(): object => $b->call('GameplayStatics', 'GetGameMode', [FilterExpr('Self')]);
+    $availabilityPlayer = static fn(): object => FilterExpr('DynamicCast', ['ClassPtr' => $b->native['SophiaCharacter'], 'TargetExpression' => $b->call('GameplayStatics', 'GetPlayerCharacter', [FilterExpr('Self'), $i(0)])]);
+    $availabilityInvalidate = [...$clear, $setBool('SSRadarMapProgressDirty', $bool(true)), $revise()];
+    $availabilityReset = [$set('SSRadarAvailabilityZoneCursor', $i(2))];
+    foreach (range(2, 6) as $zone) { $availabilityReset = [...$availabilityReset, $setBool('SSRadarAvailabilityZoneReady' . $zone, $bool(false)), $array('Array_Clear', $state('SSRadarAvailableZone' . $zone))]; }
+    $availabilityKeyChanged = $math('BooleanOR',
+        $math('BooleanOR', $math('NotEqual_ObjectObject', $p('Player'), $state('SSRadarAvailabilityPlayer')), $math('BooleanOR', $math('NotEqual_ObjectObject', $p('Source'), $state('SSRadarAvailabilitySource')), $math('NotEqual_ObjectObject', $p('World'), $state('SSRadarAvailabilityWorld')))),
+        $math('BooleanOR', $math('NotEqual_NameName', $state('SSRadarSelectedTag'), $state('SSRadarAvailabilityTag')),
+            $math('BooleanOR', $math('NotEqual_IntInt', $p('Lifespan'), $state('SSRadarAvailabilityLifespan')), $math('Not_PreBool', $math('EqualEqual_BoolBool', $p('Ready'), $state('SSRadarAvailabilityReady'))))));
+    $availabilityRefresh = [$set('SSRadarAvailabilityQueriesLastRefresh', $i(0)),
+        $availabilityLet('Source', $database()), $availabilityLet('World', $worldAnchor()), $availabilityLet('Player', $availabilityPlayer()), $availabilityLet('Lifespan', $i(0)),
+        FilterExpr('LetBool', ['VariableExpression' => $p('Ready'), 'AssignmentExpression' => $bool(false)]),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('Source')]), 'Key'),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('World')]), 'Key'),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('Player')]), 'Key'),
+        $unless($array('Array_Contains', $state('SSRadarHubTypeTags'), $state('SSRadarSelectedTag')), 'Key'),
+        $unless($availabilityProperty($p('Source'), 'PuzzleDatabase', 'bInitialized'), 'Key'),
+        $availabilityLet('Lifespan', $availabilityProperty($p('Source'), 'PuzzleDatabase', 'groupLifespan')),
+        $unless($math('Greater_IntInt', $p('Lifespan'), $i(0)), 'Key'),
+        FilterExpr('LetBool', ['VariableExpression' => $p('Ready'), 'AssignmentExpression' => $bool(true)]),
+        ['label' => 'Key'], $unless($availabilityKeyChanged, 'KeyReady'),
+        $set('SSRadarAvailabilitySource', $p('Source')), $set('SSRadarAvailabilityWorld', $p('World')), $set('SSRadarAvailabilityPlayer', $p('Player')), $set('SSRadarAvailabilityTag', $state('SSRadarSelectedTag')),
+        $set('SSRadarAvailabilityLifespan', $p('Lifespan')), $setBool('SSRadarAvailabilityReady', $p('Ready')),
+        ...$availabilityReset, ...$availabilityInvalidate,
+        ['label' => 'KeyReady'], $unless($p('Ready'), 'Done'),
+        $availabilityLet('Type', $b->call('KismetStringLibrary', 'RightChop', [$b->call('KismetStringLibrary', 'Conv_NameToString', [$state('SSRadarSelectedTag')]), $i(strlen('SaveStats.Type.'))]))];
+    foreach (range(2, 6) as $zone) {
+        $availabilityRefresh = [...$availabilityRefresh, $unless($math('EqualEqual_IntInt', $state('SSRadarAvailabilityZoneCursor'), $i($zone)), 'Zone' . ($zone + 1)),
+            $availabilityLet('Objects', $b->method($p('Source'), 'PuzzleDatabase', 'GetAllActiveSandboxPuzzleDataOfTypeInZone', [$p('Type'), FilterExpr('ByteConst', ['Value' => $zone]), $bool(true)], FilterPointer($fn, 'Objects'))),
+            $set('SSRadarAvailabilityQueriesLastRefresh', $i(1)), $set('SSRadarAvailabilityQueriesTotal', $math('Add_IntInt', $state('SSRadarAvailabilityQueriesTotal'), $i(1))),
+            $unless($math('Not_PreBool', $array('Array_Contains', $p('Objects'), FilterExpr('ObjectConst', ['Value' => 0]))), 'Unknown' . $zone),
+            $unless($math('BooleanAND', $state('SSRadarAvailabilityZoneReady' . $zone), $array('Array_Identical', $p('Objects'), $state('SSRadarAvailableZone' . $zone))), 'Changed' . $zone), $jump('Advance' . $zone),
+            ['label' => 'Changed' . $zone], $set('SSRadarAvailableZone' . $zone, $p('Objects')), $setBool('SSRadarAvailabilityZoneReady' . $zone, $bool(true)), ...$availabilityInvalidate, $jump('Advance' . $zone),
+            ['label' => 'Unknown' . $zone], $unless($state('SSRadarAvailabilityZoneReady' . $zone), 'Advance' . $zone),
+            $setBool('SSRadarAvailabilityZoneReady' . $zone, $bool(false)), $array('Array_Clear', $state('SSRadarAvailableZone' . $zone)), ...$availabilityInvalidate,
+            ['label' => 'Advance' . $zone], $set('SSRadarAvailabilityZoneCursor', $i($zone === 6 ? 2 : $zone + 1)), $jump('Done'), ['label' => 'Zone' . ($zone + 1)]];
+    }
+    $b->define('SSRadarRefreshAvailability', [], ['Source' => 'Object', 'World' => 'Object', 'Player' => 'Object', 'Lifespan' => 'Int', 'Ready' => 'Bool', 'Type' => 'Str', 'Objects' => 'Array'], [...$availabilityRefresh, ['label' => 'Done']]);
+    foreach ($b->asset->Exports[$fn - 1]->LoadedProperties as $property) {
+        if ($property->Name === 'Source') { $property->PropertyClass = $b->native['PuzzleDatabase']; }
+        if ($property->Name === 'World') { $property->PropertyClass = $b->native['GameModeBase']; }
+        if ($property->Name === 'Player') { $property->PropertyClass = $b->native['SophiaCharacter']; }
+        if ($property->Name === 'Objects') { $property->Inner = $b->field('Object', 'Objects'); $property->Inner->PropertyClass = $b->native['PuzzleData']; }
+    }
+    $fn = $b->functions['SSRadarIsPuzzleAvailable'];
+    $p = static fn(string $n): object => FilterVariable($fn, $n);
+    $availabilityLet = static fn(string $n, object $v): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $v]);
+    $availabilityQuery = [$unless($math('Greater_IntInt', $p('PuzzleId'), $i(0)), 'Visible'),
+        $unless($math('BooleanAND', $math('GreaterEqual_IntInt', $p('AvailabilityZone'), $i(2)), $math('LessEqual_IntInt', $p('AvailabilityZone'), $i(6))), 'Visible'),
+        $unless($state('SSRadarAvailabilityReady'), 'Visible'),
+        $unless($math('EqualEqual_NameName', $state('SSRadarAvailabilityTag'), $state('SSRadarSelectedTag')), 'Visible'),
+        $availabilityLet('Source', $database()), $availabilityLet('World', $worldAnchor()), $availabilityLet('Player', $availabilityPlayer()),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('Source')]), 'Visible'),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('World')]), 'Visible'),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('Player')]), 'Visible'),
+        $unless($math('EqualEqual_ObjectObject', $p('Source'), $state('SSRadarAvailabilitySource')), 'Visible'),
+        $unless($math('EqualEqual_ObjectObject', $p('World'), $state('SSRadarAvailabilityWorld')), 'Visible'),
+        $unless($math('EqualEqual_ObjectObject', $p('Player'), $state('SSRadarAvailabilityPlayer')), 'Visible'),
+        $unless($availabilityProperty($p('Source'), 'PuzzleDatabase', 'bInitialized'), 'Visible'),
+        $unless($math('EqualEqual_IntInt', $availabilityProperty($p('Source'), 'PuzzleDatabase', 'groupLifespan'), $state('SSRadarAvailabilityLifespan')), 'Visible'),
+        $availabilityLet('PuzzleData', $b->call('SophiaGameplayStatics', 'GetPuzzleData', [FilterExpr('Self'), $p('PuzzleId')])),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('PuzzleData')]), 'Visible')];
+    foreach (range(2, 6) as $zone) {
+        $availabilityQuery = [...$availabilityQuery, $unless($math('EqualEqual_IntInt', $p('AvailabilityZone'), $i($zone)), 'Zone' . ($zone + 1)),
+            $unless($state('SSRadarAvailabilityZoneReady' . $zone), 'Visible'),
+            FilterExpr('Return', ['ReturnExpression' => $array('Array_Contains', $state('SSRadarAvailableZone' . $zone), $p('PuzzleData'))]), ['label' => 'Zone' . ($zone + 1)]];
+    }
+    $b->define('SSRadarIsPuzzleAvailable', ['PuzzleId' => 'Int', 'AvailabilityZone' => 'Int'], ['Source' => 'Object', 'World' => 'Object', 'Player' => 'Object', 'PuzzleData' => 'Object'], [...$availabilityQuery, ['label' => 'Visible'], FilterExpr('Return', ['ReturnExpression' => $bool(true)])], null, 'Bool');
+    foreach ($b->asset->Exports[$fn - 1]->LoadedProperties as $property) {
+        $type = ['Source' => 'PuzzleDatabase', 'World' => 'GameModeBase', 'Player' => 'SophiaCharacter', 'PuzzleData' => 'PuzzleData'][$property->Name] ?? null;
+        if ($type !== null) { $property->PropertyClass = $b->native[$type]; }
+    }
+    $fn = $b->functions['SSRadarRefreshPentadFocus'];
+    $p = static fn(string $n): object => FilterVariable($fn, $n);
+    $focusLet = static fn(string $n, object $v): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $v]);
+    $nativeProperty = static fn(object $object, string $owner, string $name): object => RadarContext($object, FilterVariable($b->native[$owner], $name, true), FilterPointer($b->native[$owner], $name));
+    $focusLocals = ['Player' => 'Object', 'PuzzleComponent' => 'Object', 'Pentad' => 'Object', 'PentadState' => 'Byte', 'PuzzleId' => 'Int', 'NewFocus' => 'Int',
+        'NewActor' => 'Object', 'CatalogSlot' => 'Int', 'CatalogPoint' => 'Int', 'Known' => 'Int', 'ComponentIndex' => 'Int', 'Matches' => 'Int',
+        'Component' => 'Object', 'ComponentPosition' => 'Struct', 'ExpectedX' => 'Float', 'ExpectedY' => 'Float', 'ExpectedZ' => 'Float'];
+    $foundReset = $foundCommit = [];
+    $focusChanged = $math('BooleanOR', $math('NotEqual_IntInt', $p('NewFocus'), $state('SSRadarFocusPuzzleId')), $math('NotEqual_ObjectObject', $p('NewActor'), $state('SSRadarPentadActor')));
+    foreach (range(1, 5) as $relic) {
+        $focusLocals['NewFound' . $relic] = 'Bool';
+        $focusLocals['NewObject' . $relic] = 'Object';
+        $foundReset[] = FilterExpr('LetBool', ['VariableExpression' => $p('NewFound' . $relic), 'AssignmentExpression' => $bool(false)]);
+        $foundReset[] = $focusLet('NewObject' . $relic, FilterExpr('ObjectConst', ['Value' => 0]));
+        $foundCommit[] = $setBool('SSRadarPentadFound' . $relic, $p('NewFound' . $relic));
+        $foundCommit[] = $set('SSRadarPentadObject' . $relic, $p('NewObject' . $relic));
+        $focusChanged = $math('BooleanOR', $focusChanged, $math('Not_PreBool', $math('EqualEqual_BoolBool', $p('NewFound' . $relic), $state('SSRadarPentadFound' . $relic))));
+        $focusChanged = $math('BooleanOR', $focusChanged, $math('NotEqual_ObjectObject', $p('NewObject' . $relic), $state('SSRadarPentadObject' . $relic)));
+    }
+    $nativeObjects = static fn(): object => $nativeProperty($p('Pentad'), 'Seek5', 'HiddenObjects');
+    $bindRelics = [$unless($math('EqualEqual_IntInt', $array('Array_Length', $nativeObjects()), $i(5)), 'MappingFailed'),
+        $unless($math('BooleanAND', $math('EqualEqual_ObjectObject', $p('Pentad'), $state('SSRadarPentadActor')), $math('EqualEqual_IntInt', $p('NewFocus'), $state('SSRadarFocusPuzzleId'))), 'BindRelics')];
+    foreach (range(1, 5) as $relic) {
+        $bindRelics[] = $unless($valid($state('SSRadarPentadObject' . $relic)), 'BindRelics');
+        $bindRelics[] = $unless($array('Array_Contains', $nativeObjects(), $state('SSRadarPentadObject' . $relic)), 'BindRelics');
+    }
+    foreach (range(1, 5) as $relic) { $bindRelics[] = $focusLet('NewObject' . $relic, $state('SSRadarPentadObject' . $relic)); }
+    $bindRelics = [...$bindRelics, $jump('ReadFound'), ['label' => 'BindRelics']];
+    foreach (range(1, 5) as $relic) {
+        $bindRelics = [...$bindRelics,
+            $focusLet('CatalogPoint', $math('Add_IntInt', $math('Multiply_IntInt', $p('CatalogSlot'), $i(5)), $i($relic - 1))),
+            $array('Array_Get', $state('SSRadarPentadLocalKnown'), $p('CatalogPoint'), $p('Known')),
+            $unless($math('Greater_IntInt', $p('Known'), $i(0)), 'MappingFailed')];
+        foreach (['X', 'Y', 'Z'] as $axis) { $bindRelics[] = $array('Array_Get', $state('SSRadarPentadLocal' . $axis), $p('CatalogPoint'), $p('Expected' . $axis)); }
+        $bindRelics = [...$bindRelics, $focusLet('Matches', $i(0)), $focusLet('ComponentIndex', $i(0)), ['label' => 'MatchLoop' . $relic],
+            $unless($math('Less_IntInt', $p('ComponentIndex'), $i(5)), 'MatchDone' . $relic),
+            $array('Array_Get', $nativeObjects(), $p('ComponentIndex'), $p('Component')),
+            $focusLet('Component', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['Seek5HiddenObject'], 'TargetExpression' => $p('Component')])),
+            $unless($valid($p('Component')), 'MappingFailed'),
+            $focusLet('ComponentPosition', $nativeProperty($p('Component'), 'SceneComponent', 'RelativeLocation')),
+            $unless($math('LessEqual_FloatFloat', $math('Vector_Distance', $p('ComponentPosition'), $math('MakeVector', $p('ExpectedX'), $p('ExpectedY'), $p('ExpectedZ'))), $f(0.05)), 'MatchNext' . $relic),
+            $focusLet('Matches', $math('Add_IntInt', $p('Matches'), $i(1))), $focusLet('NewObject' . $relic, $p('Component')),
+            ['label' => 'MatchNext' . $relic], $focusLet('ComponentIndex', $math('Add_IntInt', $p('ComponentIndex'), $i(1))), $jump('MatchLoop' . $relic),
+            ['label' => 'MatchDone' . $relic], $unless($math('EqualEqual_IntInt', $p('Matches'), $i(1)), 'MappingFailed')];
+        foreach (range(1, $relic) as $previous) {
+            if ($previous < $relic) { $bindRelics[] = $unless($math('NotEqual_ObjectObject', $p('NewObject' . $previous), $p('NewObject' . $relic)), 'MappingFailed'); }
+        }
+    }
+    $bindRelics = [...$bindRelics, $jump('ReadFound'), ['label' => 'MappingFailed']];
+    foreach (range(1, 5) as $relic) { $bindRelics[] = $focusLet('NewObject' . $relic, FilterExpr('ObjectConst', ['Value' => 0])); }
+    $bindRelics[] = ['label' => 'ReadFound'];
+    foreach (range(1, 5) as $relic) {
+        $bindRelics = [...$bindRelics, $unless($valid($p('NewObject' . $relic)), 'FoundNext' . $relic),
+            FilterExpr('LetBool', ['VariableExpression' => $p('NewFound' . $relic), 'AssignmentExpression' => $nativeProperty($p('NewObject' . $relic), 'Seek5HiddenObject', 'isFound')]), ['label' => 'FoundNext' . $relic]];
+    }
+    // Read the local character's native worker list through its reflected getter.
+    // Unknown/incomplete catalog entries and missing authority keep the overview.
+    $b->define('SSRadarRefreshPentadFocus', [], $focusLocals, [
+        $focusLet('NewFocus', $i(0)), $focusLet('NewActor', FilterExpr('ObjectConst', ['Value' => 0])), ...$foundReset,
+        $unless($math('EqualEqual_NameName', $state('SSRadarSelectedTag'), FilterExpr('NameConst', ['Value' => 'SaveStats.Type.seek5'])), 'Commit'),
+        $focusLet('Player', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['SophiaCharacter'], 'TargetExpression' => $b->call('GameplayStatics', 'GetPlayerCharacter', [FilterExpr('Self'), $i(0)])])),
+        $unless($valid($p('Player')), 'Commit'),
+        $focusLet('PuzzleComponent', $nativeProperty($p('Player'), 'SophiaCharacter', 'CharPuzzleComponent')),
+        $unless($valid($p('PuzzleComponent')), 'Commit'),
+        $focusLet('Pentad', $b->method($p('PuzzleComponent'), 'CharPuzzleComponent', 'GetCurrentSeek5', [], FilterPointer($fn, 'Pentad'))),
+        $unless($valid($p('Pentad')), 'Commit'),
+        $focusLet('PentadState', $b->method($p('Pentad'), 'Seek5', 'GetState', [], FilterPointer($fn, 'PentadState'))),
+        $unless($math('EqualEqual_ByteByte', $p('PentadState'), FilterExpr('ByteConst', ['Value' => 1])), 'Commit'),
+        $focusLet('PuzzleId', $nativeProperty($p('Pentad'), 'PuzzleBase', 'KrakenId')),
+        $focusLet('CatalogSlot', $array('Array_Find', $state('SSRadarPentadIds'), $p('PuzzleId'))),
+        $unless($math('GreaterEqual_IntInt', $p('CatalogSlot'), $i(0)), 'Commit'),
+        $unless($math('Not_PreBool', $localCall('SSRadarIsSolved', [$p('PuzzleId')])), 'Commit'),
+        $unless($state('SSRadarProgressAvailable'), 'Commit'),
+        $focusLet('NewFocus', $p('PuzzleId')), $focusLet('NewActor', $p('Pentad')), ...$bindRelics,
+        ['label' => 'Commit'], $unless($focusChanged, 'Done'),
+        $set('SSRadarFocusPuzzleId', $p('NewFocus')), $set('SSRadarPentadActor', $p('NewActor')), ...$foundCommit,
+        $setBool('SSRadarMapProgressDirty', $bool(true)), ...$clear, $revise(), ['label' => 'Done'],
+    ]);
+    foreach ($b->asset->Exports[$fn - 1]->LoadedProperties as $property) {
+        $type = ['Player' => 'SophiaCharacter', 'PuzzleComponent' => 'CharPuzzleComponent', 'Pentad' => 'Seek5', 'NewActor' => 'Seek5', 'Component' => 'Seek5HiddenObject'][$property->Name] ?? null;
+        if (str_starts_with($property->Name, 'NewObject')) { $type = 'Seek5HiddenObject'; }
+        if ($type !== null) { $property->PropertyClass = $b->native[$type]; }
+    }
+    $fn = $b->functions['SSRadarSetSelection'];
+    $p = static fn(string $n): object => FilterVariable($fn, $n);
+    $b->define('SSRadarSetSelection', ['SelectedTag' => 'Name', 'IncludeSites' => 'Bool', 'Enabled' => 'Bool'], [], [
+        $unless($math('BooleanAND', $math('EqualEqual_NameName', $state('SSRadarSelectedTag'), $p('SelectedTag')), $math('BooleanAND', $math('EqualEqual_BoolBool', $state('SSRadarIncludeSites'), $p('IncludeSites')), $math('EqualEqual_BoolBool', $state('SSRadarEnabled'), $p('Enabled')))), 'Changed'),
+        FilterExpr('Return', ['ReturnExpression' => FilterExpr('Nothing')]), ['label' => 'Changed'], $set('SSRadarSelectedTag', $p('SelectedTag')), $setBool('SSRadarIncludeSites', $p('IncludeSites')), $setBool('SSRadarEnabled', $p('Enabled')),
+        ...$clear, $revise(), $localCall('SSRadarApplyIcon'),
+    ]);
+    $fn = $b->functions['SSRadarSetView'];
+    $p = static fn(string $n): object => FilterVariable($fn, $n);
+    $letView = static fn(string $n, object $v): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $v]);
+    $b->define('SSRadarSetView', ['ZoomIndex' => 'Int', 'SizeIndex' => 'Int'], ['Zoom' => 'Int', 'Size' => 'Int'], [
+        $letView('Zoom', $math('Max', $i(0), $math('Min', $i(3), $p('ZoomIndex')))), $letView('Size', $math('Max', $i(0), $math('Min', $i(2), $p('SizeIndex')))),
+        $unless($math('BooleanOR', $math('NotEqual_IntInt', $p('Zoom'), $state('SSRadarZoomIndex')), $math('NotEqual_IntInt', $p('Size'), $state('SSRadarSizeIndex'))), 'Done'),
+        $unless($math('NotEqual_IntInt', $p('Zoom'), $state('SSRadarZoomIndex')), 'Size'), ...unserialize(serialize($clear)),
+        ['label' => 'Size'], $set('SSRadarZoomIndex', $p('Zoom')), $set('SSRadarSizeIndex', $p('Size')), $revise(), $localCall('SSRadarApplyView'), ['label' => 'Done'],
+    ]);
+    $view = [$b->method(FilterExpr('Self'), 'Widget', 'SetRenderTransformPivot', [$makeVec($f(0), $f(1))])];
+    foreach ([5000, 10000, 20000, 40000] as $zoom => $radius) {
+        $view = [...$view, $unless($math('EqualEqual_IntInt', $state('SSRadarZoomIndex'), $i($zoom)), 'Zoom' . ($zoom + 1)),
+            $set('SSRadarRadiusCm', $f($radius)), $labelText('SSRadarRange', ($radius / 100) . ' m'), $jump('Scale'), ['label' => 'Zoom' . ($zoom + 1)]];
+    }
+    $view[] = ['label' => 'Scale'];
+    foreach ([1, 1.25, 1.5] as $size => $scale) {
+        $view = [...$view, $unless($math('EqualEqual_IntInt', $state('SSRadarSizeIndex'), $i($size)), 'Size' . ($size + 1)),
+            $b->method(FilterExpr('Self'), 'Widget', 'SetRenderScale', [$makeVec($f($scale), $f($scale))]), $jump('Done'), ['label' => 'Size' . ($size + 1)]];
+    }
+    $view[] = ['label' => 'Done'];
+    $b->define('SSRadarApplyView', [], [], $view);
+    $fn = $b->functions['SSRadarChangeZoom'];
+    $b->define('SSRadarChangeZoom', ['Delta' => 'Int'], [], [$localCall('SSRadarSetView', [$math('Add_IntInt', $state('SSRadarZoomIndex'), FilterVariable($fn, 'Delta')), $state('SSRadarSizeIndex')])]);
+    $b->define('SSRadarCycleSize', [], [], [$unless($math('Less_IntInt', $state('SSRadarSizeIndex'), $i(2)), 'Wrap'),
+        $localCall('SSRadarSetView', [$state('SSRadarZoomIndex'), $math('Add_IntInt', $state('SSRadarSizeIndex'), $i(1))]), $jump('Done'),
+        ['label' => 'Wrap'], $localCall('SSRadarSetView', [$state('SSRadarZoomIndex'), $i(0)]), ['label' => 'Done']]);
+    $b->define('SSRadarToggleEnabled', [], [], [$localCall('SSRadarSetSelection', [$state('SSRadarSelectedTag'), $state('SSRadarIncludeSites'), $math('Not_PreBool', $state('SSRadarEnabled'))])]);
+    $fn = $b->functions['SSRadarHandleShortcut'];
+    $player = FilterVariable($fn, 'Player');
+    $inputLocal = static fn(string $name): object => FilterVariable($fn, $name);
+    $inputLet = static fn(string $name, object $value): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $name), 'Variable' => $inputLocal($name), 'Expression' => $value]);
+    $shortcut = [$inputLet('Controller', $b->call('GameplayStatics', 'GetPlayerController', [FilterExpr('Self'), $i(0)])),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$inputLocal('Controller')]), 'Done'),
+        $inputLet('OwnerPlayer', $b->method(FilterExpr('Self'), 'Widget', 'GetOwningPlayer', [], FilterPointer($fn, 'OwnerPlayer'))),
+        $unless($math('EqualEqual_ObjectObject', $inputLocal('OwnerPlayer'), $inputLocal('Controller')), 'Done'),
+        $inputLet('OwnerWidget', $b->call('KismetSystemLibrary', 'GetOuterObject', [$b->call('KismetSystemLibrary', 'GetOuterObject', [FilterExpr('Self')])])),
+        $inputLet('CurrentHud', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['SophiaHUD'], 'TargetExpression' => $b->method($inputLocal('Controller'), 'PlayerController', 'GetHUD', [], FilterPointer($fn, 'CurrentHud'))])),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$inputLocal('CurrentHud')]), 'Viewport'),
+        $inputLet('ExpectedOwner', RadarContext($inputLocal('CurrentHud'), FilterVariable($b->native['SophiaHUD'], 'GameHUDBaseWidget', true), FilterPointer($b->native['SophiaHUD'], 'GameHUDBaseWidget'))),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$inputLocal('ExpectedOwner')]), 'Viewport'),
+        $unless($math('EqualEqual_ObjectObject', $inputLocal('OwnerWidget'), $inputLocal('ExpectedOwner')), 'Done'), $jump('Player'),
+        ['label' => 'Viewport'],
+        $unless($b->method(FilterExpr('Self'), 'UserWidget', 'IsInViewport', [], FilterPointer($fn, 'MenuResult')), 'Nested'), $jump('Player'),
+        ['label' => 'Nested'], $inputLet('OwnerWidget', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['UserWidget'], 'TargetExpression' => $inputLocal('OwnerWidget')])),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$inputLocal('OwnerWidget')]), 'Done'),
+        $unless($b->method($inputLocal('OwnerWidget'), 'UserWidget', 'IsInViewport', [], FilterPointer($fn, 'MenuResult')), 'Done'),
+        ['label' => 'Player'], $inputLet('Player', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['SophiaCharacter'], 'TargetExpression' => $b->call('GameplayStatics', 'GetPlayerCharacter', [FilterExpr('Self'), $i(0)])])),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$player]), 'Done')];
+    foreach (['IsMapMenuVisible', 'IsPauseMenuVisible', 'IsInPuzzleMode', 'AreOtherInputWidgetsVisible'] as $predicate) {
+        $args = $predicate === 'AreOtherInputWidgetsVisible' ? [FilterExpr('ObjectConst', ['Value' => 0])] : [];
+        $shortcut[] = $unless($math('Not_PreBool', $b->method($player, 'SophiaCharacter', $predicate, $args, FilterPointer($fn, 'MenuResult'))), 'Done');
+    }
+    foreach ([['SSRadarToggleEnabled', []], ['SSRadarChangeZoom', [$i(-1)]], ['SSRadarChangeZoom', [$i(1)]], ['SSRadarCycleSize', []]] as $action => [$n, $args]) {
+        $shortcut[] = $unless($math('EqualEqual_IntInt', FilterVariable($fn, 'Action'), $i($action)), 'Action' . ($action + 1));
+        $shortcut[] = $localCall($n, $args);
+        $shortcut[] = $jump('Done'); $shortcut[] = ['label' => 'Action' . ($action + 1)];
+    }
+    $shortcut[] = ['label' => 'Done'];
+    $b->define('SSRadarHandleShortcut', ['Action' => 'Int'], ['Player' => 'Object', 'MenuResult' => 'Bool', 'Controller' => 'Object', 'OwnerPlayer' => 'Object', 'OwnerWidget' => 'Object', 'CurrentHud' => 'Object', 'ExpectedOwner' => 'Object'], $shortcut);
+    foreach (array_values($shortcuts) as $action => [, $callback]) { $b->define($callback, [], [], [$localCall('SSRadarHandleShortcut', [$i($action)])]); }
+    $catalog = GetOverlayTypes();
+    $parts = [$set('SSRadarTypeIndex', $i(-1))];
+    foreach ($index['typeKeys'] as $typeIndex => $key) {
+        $parts[] = $unless($math('EqualEqual_NameName', $state('SSRadarSelectedTag'), FilterExpr('NameConst', ['Value' => 'SaveStats.Type.' . $key])), 'Type' . ($typeIndex + 1));
+        $parts[] = $set('SSRadarTypeIndex', $i($typeIndex));
+        for ($pin = 0; $pin < 24; $pin++) { $parts[] = $b->method($state('SSRadarPin' . $pin), 'Image', 'SetBrushFromTexture', [FilterExpr('ObjectConst', ['Value' => $texture($catalog[$key]['iconAsset'])]), $bool(false)]); }
+        $parts[] = $labelText('SSRadarCaption', $catalog[$key]['name']);
+        $parts[] = $jump('Done');
+        $parts[] = ['label' => 'Type' . ($typeIndex + 1)];
+    }
+    $parts[] = ['label' => 'Done'];
+    $b->define('SSRadarApplyIcon', [], [], $parts);
+    $fn = $b->functions['SSRadarStartScan'];
+    $l = static fn(string $n): object => FilterVariable($fn, $n);
+    $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $l($n), 'Expression' => $e]);
+    $floorCell = static fn(object $position, int $origin): object => $math('Subtract_IntInt', $math('FFloor', $math('Divide_FloatFloat', $position, $f(20000))), $i($origin));
+    $startParts = [$array('Array_Clear', $state('SSRadarBestIndices')), $array('Array_Clear', $state('SSRadarBestDistances')),
+        $set('SSRadarScanX', $state('SSRadarPlayerX')), $set('SSRadarScanY', $state('SSRadarPlayerY')),
+        $set('SSRadarMinCol', $math('Max', $floorCell($math('Subtract_FloatFloat', $state('SSRadarPlayerX'), $state('SSRadarRadiusCm')), $index['originCellX']), $i(0))),
+        $set('SSRadarMaxCol', $math('Min', $floorCell($math('Add_FloatFloat', $state('SSRadarPlayerX'), $state('SSRadarRadiusCm')), $index['originCellX']), $i($index['width'] - 1))),
+        $set('SSRadarRow', $math('Max', $floorCell($math('Subtract_FloatFloat', $state('SSRadarPlayerY'), $state('SSRadarRadiusCm')), $index['originCellY']), $i(0))),
+        $set('SSRadarMaxRow', $math('Min', $floorCell($math('Add_FloatFloat', $state('SSRadarPlayerY'), $state('SSRadarRadiusCm')), $index['originCellY']), $i($index['height'] - 1))),
+        $setBool('SSRadarDirty', $bool(false)), $setBool('SSRadarScanActive', $bool(true)),
+        $unless($math('BooleanAND', $math('LessEqual_IntInt', $state('SSRadarMinCol'), $state('SSRadarMaxCol')), $math('LessEqual_IntInt', $state('SSRadarRow'), $state('SSRadarMaxRow'))), 'Empty'),
+        $let('Cell', $math('Add_IntInt', $math('Multiply_IntInt', $state('SSRadarTypeIndex'), $i($index['width'] * $index['height'])), $math('Add_IntInt', $math('Multiply_IntInt', $state('SSRadarRow'), $i($index['width'])), $state('SSRadarMinCol')))),
+        $array('Array_Get', $state('SSRadarOffsets'), $l('Cell'), $l('Offset')), $set('SSRadarCursor', $l('Offset')),
+        $array('Array_Get', $state('SSRadarOffsets'), $math('Add_IntInt', $l('Cell'), $math('Add_IntInt', $math('Subtract_IntInt', $state('SSRadarMaxCol'), $state('SSRadarMinCol')), $i(1))), $l('Offset')), $set('SSRadarEnd', $l('Offset')), $jump('Done'),
+        ['label' => 'Empty'], $set('SSRadarRow', $math('Add_IntInt', $state('SSRadarMaxRow'), $i(1))), ['label' => 'Done']];
+    $b->define('SSRadarStartScan', [], ['Cell' => 'Int', 'Offset' => 'Int'], $startParts);
+    $fn = $b->functions['SSRadarScan'];
+    $l = static fn(string $n): object => FilterVariable($fn, $n);
+    $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $l($n), 'Expression' => $e]);
+    $scan = [$set('SSRadarVisitedLastUpdate', $i(0)), ['label' => 'Loop'],
+        $unless($math('Less_IntInt', $state('SSRadarVisitedLastUpdate'), $i(128)), 'Done'),
+        $unless($math('LessEqual_IntInt', $state('SSRadarRow'), $state('SSRadarMaxRow')), 'Commit'),
+        $unless($math('Less_IntInt', $state('SSRadarCursor'), $state('SSRadarEnd')), 'NextRow'),
+        $let('Point', $state('SSRadarCursor')), $set('SSRadarCursor', $math('Add_IntInt', $state('SSRadarCursor'), $i(1))),
+        $set('SSRadarVisitedLastUpdate', $math('Add_IntInt', $state('SSRadarVisitedLastUpdate'), $i(1))),
+        $set('SSRadarVisitedTotal', $math('Add_IntInt', $state('SSRadarVisitedTotal'), $i(1))),
+        $array('Array_Get', $state('SSRadarSpawn'), $l('Point'), $l('Spawn')),
+        $unless($math('BooleanOR', $state('SSRadarIncludeSites'), $math('EqualEqual_IntInt', $l('Spawn'), $i(0))), 'Loop'),
+        $array('Array_Get', $state('SSRadarPuzzleIds'), $l('Point'), $l('PuzzleId')),
+        $unless($localCall('SSRadarMatchesPentadFocus', [$l('Point'), $l('PuzzleId')]), 'Loop'),
+        $array('Array_Get', $state('SSRadarHubAvailabilityZones'), $l('Point'), $l('AvailabilityZone')),
+        $unless($localCall('SSRadarIsPuzzleAvailable', [$l('PuzzleId'), $l('AvailabilityZone')]), 'Loop'),
+        $unless($math('Not_PreBool', $localCall('SSRadarIsSolved', [$l('PuzzleId')])), 'Loop'),
+        $array('Array_Get', $state('SSRadarX'), $l('Point'), $l('X')), $array('Array_Get', $state('SSRadarY'), $l('Point'), $l('Y')),
+        $let('DX', $math('Subtract_FloatFloat', $l('X'), $state('SSRadarScanX'))), $let('DY', $math('Subtract_FloatFloat', $l('Y'), $state('SSRadarScanY'))),
+        $let('Distance', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('DX'), $l('DX')), $math('Multiply_FloatFloat', $l('DY'), $l('DY')))),
+        $unless($math('LessEqual_FloatFloat', $l('Distance'), $math('Multiply_FloatFloat', $state('SSRadarRadiusCm'), $state('SSRadarRadiusCm'))), 'Loop'),
+        $array('Array_Get', $state('SSRadarRanks'), $l('Point'), $l('Rank')), $let('Insert', $i(0)),
+        ['label' => 'Find'], $unless($math('Less_IntInt', $l('Insert'), $array('Array_Length', $state('SSRadarBestIndices'))), 'Insert'),
+        $array('Array_Get', $state('SSRadarBestDistances'), $l('Insert'), $l('ExistingDistance')),
+        $unless($math('Less_FloatFloat', $l('ExistingDistance'), $l('Distance')), 'CheckTie'), $jump('Advance'),
+        ['label' => 'CheckTie'], $unless($math('EqualEqual_FloatFloat', $l('ExistingDistance'), $l('Distance')), 'Insert'),
+        $array('Array_Get', $state('SSRadarBestIndices'), $l('Insert'), $l('ExistingPoint')), $array('Array_Get', $state('SSRadarRanks'), $l('ExistingPoint'), $l('ExistingRank')),
+        $unless($math('Less_IntInt', $l('ExistingRank'), $l('Rank')), 'Insert'),
+        ['label' => 'Advance'], $let('Insert', $math('Add_IntInt', $l('Insert'), $i(1))), $jump('Find'),
+        ['label' => 'Insert'], $unless($math('Less_IntInt', $l('Insert'), $i(24)), 'Loop'),
+        $array('Array_Insert', $state('SSRadarBestIndices'), $l('Point'), $l('Insert')), $array('Array_Insert', $state('SSRadarBestDistances'), $l('Distance'), $l('Insert')),
+        $unless($math('Greater_IntInt', $array('Array_Length', $state('SSRadarBestIndices')), $i(24)), 'Loop'),
+        $array('Array_Remove', $state('SSRadarBestIndices'), $i(24)), $array('Array_Remove', $state('SSRadarBestDistances'), $i(24)), $jump('Loop'),
+        ['label' => 'NextRow'], $set('SSRadarRow', $math('Add_IntInt', $state('SSRadarRow'), $i(1))),
+        $unless($math('LessEqual_IntInt', $state('SSRadarRow'), $state('SSRadarMaxRow')), 'Commit'),
+        $let('Cell', $math('Add_IntInt', $math('Multiply_IntInt', $state('SSRadarTypeIndex'), $i($index['width'] * $index['height'])), $math('Add_IntInt', $math('Multiply_IntInt', $state('SSRadarRow'), $i($index['width'])), $state('SSRadarMinCol')))),
+        $array('Array_Get', $state('SSRadarOffsets'), $l('Cell'), $l('Offset')), $set('SSRadarCursor', $l('Offset')),
+        $array('Array_Get', $state('SSRadarOffsets'), $math('Add_IntInt', $l('Cell'), $math('Add_IntInt', $math('Subtract_IntInt', $state('SSRadarMaxCol'), $state('SSRadarMinCol')), $i(1))), $l('Offset')), $set('SSRadarEnd', $l('Offset')), $jump('Loop'),
+        ['label' => 'Commit'], $set('SSRadarDisplayIndices', $state('SSRadarBestIndices')), $setBool('SSRadarScanActive', $bool(false)), $set('SSRadarWait', $f(0.5)), ['label' => 'Done']];
+    $b->define('SSRadarScan', [], ['Point' => 'Int', 'PuzzleId' => 'Int', 'AvailabilityZone' => 'Int', 'Spawn' => 'Int', 'Rank' => 'Int', 'Insert' => 'Int', 'ExistingPoint' => 'Int', 'ExistingRank' => 'Int', 'Cell' => 'Int', 'Offset' => 'Int', 'X' => 'Float', 'Y' => 'Float', 'DX' => 'Float', 'DY' => 'Float', 'Distance' => 'Float', 'ExistingDistance' => 'Float'], $scan);
+    $fn = $b->functions['SSRadarRender'];
+    $l = static fn(string $n): object => FilterVariable($fn, $n);
+    $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $l($n), 'Expression' => $e]);
+    $render = [$let('Sin', $math('DegSin', $state('SSRadarYaw'))), $let('Cos', $math('DegCos', $state('SSRadarYaw')))];
+    foreach (range(0, 23) as $pin) {
+        $render = [...$render, $unless($math('Less_IntInt', $i($pin), $array('Array_Length', $state('SSRadarDisplayIndices'))), 'Hide' . $pin),
+            $array('Array_Get', $state('SSRadarDisplayIndices'), $i($pin), $l('Point')),
+            $array('Array_Get', $state('SSRadarPuzzleIds'), $l('Point'), $l('PuzzleId')),
+            $unless($localCall('SSRadarMatchesPentadFocus', [$l('Point'), $l('PuzzleId')]), 'Solved' . $pin),
+            $array('Array_Get', $state('SSRadarHubAvailabilityZones'), $l('Point'), $l('AvailabilityZone')),
+            $unless($localCall('SSRadarIsPuzzleAvailable', [$l('PuzzleId'), $l('AvailabilityZone')]), 'Solved' . $pin),
+            $unless($math('Not_PreBool', $localCall('SSRadarIsSolved', [$l('PuzzleId')])), 'Solved' . $pin),
+            $array('Array_Get', $state('SSRadarX'), $l('Point'), $l('X')), $array('Array_Get', $state('SSRadarY'), $l('Point'), $l('Y')), $array('Array_Get', $state('SSRadarZ'), $l('Point'), $l('Z')),
+            $let('DX', $math('Subtract_FloatFloat', $l('X'), $state('SSRadarPlayerX'))), $let('DY', $math('Subtract_FloatFloat', $l('Y'), $state('SSRadarPlayerY'))),
+            $unless($math('LessEqual_FloatFloat', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('DX'), $l('DX')), $math('Multiply_FloatFloat', $l('DY'), $l('DY'))), $math('Multiply_FloatFloat', $state('SSRadarRadiusCm'), $state('SSRadarRadiusCm'))), 'Hide' . $pin),
+            $let('ScreenX', $math('Multiply_FloatFloat', $math('Subtract_FloatFloat', $math('Multiply_FloatFloat', $l('DY'), $l('Cos')), $math('Multiply_FloatFloat', $l('DX'), $l('Sin'))), $math('Divide_FloatFloat', $f(96), $state('SSRadarRadiusCm')))),
+            $let('ScreenY', $math('Multiply_FloatFloat', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('DX'), $l('Cos')), $math('Multiply_FloatFloat', $l('DY'), $l('Sin'))), $math('Divide_FloatFloat', $f(-96), $state('SSRadarRadiusCm')))),
+            $b->method($state('SSRadarPin' . $pin), 'Widget', 'SetRenderTranslation', [$makeVec($l('ScreenX'), $l('ScreenY'))]),
+            $b->method($state('SSRadarHeight' . $pin), 'Widget', 'SetRenderTranslation', [$makeVec($l('ScreenX'), $l('ScreenY'))]),
+            $array('Array_Get', $state('SSRadarSpawn'), $l('Point'), $l('Spawn')),
+            $unless($math('EqualEqual_IntInt', $l('Spawn'), $i(0)), 'Site' . $pin),
+            $b->method($state('SSRadarPin' . $pin), 'Image', 'SetColorAndOpacity', [$math('MakeColor', $f(1), $f(1), $f(1), $f(1))]), $jump('ColorDone' . $pin),
+            ['label' => 'Site' . $pin], $b->method($state('SSRadarPin' . $pin), 'Image', 'SetColorAndOpacity', [$math('MakeColor', $f(0.35), $f(0.85), $f(1), $f(0.7))]), ['label' => 'ColorDone' . $pin],
+            $visible('SSRadarPin' . $pin, 3), $visible('SSRadarHeight' . $pin, 3),
+            $unless($math('Greater_FloatFloat', $math('Subtract_FloatFloat', $l('Z'), $state('SSRadarPlayerZ')), $f(1000)), 'Below' . $pin), $labelText('SSRadarHeight' . $pin, '^'), $jump('Next' . $pin),
+            ['label' => 'Below' . $pin], $unless($math('Less_FloatFloat', $math('Subtract_FloatFloat', $l('Z'), $state('SSRadarPlayerZ')), $f(-1000)), 'Level' . $pin), $labelText('SSRadarHeight' . $pin, 'v'), $jump('Next' . $pin),
+            ['label' => 'Level' . $pin], $labelText('SSRadarHeight' . $pin, ''), $jump('Next' . $pin),
+            ['label' => 'Solved' . $pin], $setBool('SSRadarDirty', $bool(true)), $setBool('SSRadarScanActive', $bool(false)),
+            ['label' => 'Hide' . $pin], $visible('SSRadarPin' . $pin, 1), $visible('SSRadarHeight' . $pin, 1), ['label' => 'Next' . $pin]];
+    }
+    $b->define('SSRadarRender', [], ['Point' => 'Int', 'PuzzleId' => 'Int', 'AvailabilityZone' => 'Int', 'Spawn' => 'Int', 'X' => 'Float', 'Y' => 'Float', 'Z' => 'Float', 'DX' => 'Float', 'DY' => 'Float', 'ScreenX' => 'Float', 'ScreenY' => 'Float', 'Sin' => 'Float', 'Cos' => 'Float'], $render);
+    $fn = $b->functions['SSRadarUpdate'];
+    $p = static fn(string $n): object => FilterVariable($fn, $n);
+    $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $e]);
+    $distanceSquared = static fn(object $x, object $y): object => $math('Add_FloatFloat', $math('Multiply_FloatFloat', $x, $x), $math('Multiply_FloatFloat', $y, $y));
+    $update = [$set('SSRadarVisitedLastUpdate', $i(0)), $localCall('SSRadarRefreshPentadFocus'), $localCall('SSRadarRefreshAvailability'),
+        $unless($math('BooleanAND', $state('SSRadarEnabled'), $math('BooleanAND', $math('Not_PreBool', $p('MenuHidden')), $math('NotEqual_NameName', $state('SSRadarSelectedTag'), FilterExpr('NameConst', ['Value' => 'None'])))), 'Hidden'),
+        FilterExpr('LetBool', ['VariableExpression' => $p('Teleported'), 'AssignmentExpression' => $math('Greater_FloatFloat', $distanceSquared($math('Subtract_FloatFloat', $p('PlayerX'), $state('SSRadarPlayerX')), $math('Subtract_FloatFloat', $p('PlayerY'), $state('SSRadarPlayerY'))), $f(25000000))]),
+        $set('SSRadarPlayerX', $p('PlayerX')), $set('SSRadarPlayerY', $p('PlayerY')), $set('SSRadarPlayerZ', $p('PlayerZ')), $set('SSRadarYaw', $p('HeadingYaw')),
+        $unless($math('GreaterEqual_IntInt', $state('SSRadarTypeIndex'), $i(0)), 'Hidden'),
+        $let('CellX', $floorCell($p('PlayerX'), $index['originCellX'])), $let('CellY', $floorCell($p('PlayerY'), $index['originCellY'])),
+        $unless($math('BooleanOR', $state('SSRadarDirty'), $p('Teleported')), 'Movement'),
+        $array('Array_Clear', $state('SSRadarDisplayIndices')), $jump('Restart'),
+        ['label' => 'Movement'], $unless($math('Not_PreBool', $state('SSRadarScanActive')), 'Unchanged'),
+        $unless($math('BooleanOR',
+            $math('BooleanOR', $math('NotEqual_IntInt', $p('CellX'), $state('SSRadarCellX')), $math('NotEqual_IntInt', $p('CellY'), $state('SSRadarCellY'))),
+            $math('Greater_FloatFloat', $distanceSquared($math('Subtract_FloatFloat', $p('PlayerX'), $state('SSRadarScanX')), $math('Subtract_FloatFloat', $p('PlayerY'), $state('SSRadarScanY'))), $f(25000000))), 'Unchanged'),
+        ['label' => 'Restart'], $set('SSRadarCellX', $p('CellX')), $set('SSRadarCellY', $p('CellY')), $localCall('SSRadarStartScan'),
+        ['label' => 'Unchanged'], $visible('SSRadarCanvas', 3),
+        $unless($state('SSRadarScanActive'), 'Wait'), $localCall('SSRadarScan'), $jump('Render'),
+        ['label' => 'Wait'], $set('SSRadarWait', $math('Subtract_FloatFloat', $state('SSRadarWait'), $p('DeltaSeconds'))), $unless($math('LessEqual_FloatFloat', $state('SSRadarWait'), $f(0)), 'Render'), $localCall('SSRadarStartScan'), $localCall('SSRadarScan'),
+        ['label' => 'Render'], $localCall('SSRadarRender'), $jump('Done'), ['label' => 'Hidden'], $visible('SSRadarCanvas', 1), ['label' => 'Done']];
+    $b->define('SSRadarUpdate', ['PlayerX' => 'Float', 'PlayerY' => 'Float', 'PlayerZ' => 'Float', 'HeadingYaw' => 'Float', 'MenuHidden' => 'Bool', 'DeltaSeconds' => 'Float'], ['CellX' => 'Int', 'CellY' => 'Int', 'Teleported' => 'Bool'], $update);
+    $fn = $b->functions['SSRadarTick'];
+    $l = static fn(string $n): object => FilterVariable($fn, $n);
+    $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $l($n), 'Expression' => $e]);
+    $component = static fn(string $local, string $struct, string $member): object => FilterExpr('StructMemberContext', ['StructMemberExpression' => FilterPointer($b->native[$struct], $member), 'StructExpression' => $l($local)]);
+    $tick = [$let('Player', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['SophiaCharacter'], 'TargetExpression' => $b->call('GameplayStatics', 'GetPlayerCharacter', [FilterExpr('Self'), $i(0)])])),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$l('Player')]), 'Invalid'),
+        $unless($math('NotEqual_ObjectObject', $l('Player'), $state('SSRadarProgressPlayer')), 'SamePlayer'),
+        $setBool('SSRadarDirty', $bool(true)), $setBool('SSRadarScanActive', $bool(false)),
+        ['label' => 'SamePlayer'], $set('SSRadarProgressPlayer', $l('Player')),
+        FilterExpr('LetBool', ['VariableExpression' => $l('MapVisible'), 'AssignmentExpression' => $b->method($l('Player'), 'SophiaCharacter', 'IsMapMenuVisible', [], FilterPointer($fn, 'MapVisible'))]),
+        $unless($math('Not_PreBool', $l('MapVisible')), 'MapOpen'), $setBool('SSRadarMapProgressDirty', $bool(true)), ['label' => 'MapOpen'],
+        $let('PlayerPosition', $b->method($l('Player'), 'Actor', 'K2_GetActorLocation', [], FilterPointer($fn, 'PlayerPosition'))),
+        $let('PlayerRotation', $b->method($l('Player'), 'Pawn', 'GetControlRotation', [], FilterPointer($fn, 'PlayerRotation'))),
+        $localCall('SSRadarUpdate', [$component('PlayerPosition', 'Vector', 'X'), $component('PlayerPosition', 'Vector', 'Y'), $component('PlayerPosition', 'Vector', 'Z'), $component('PlayerRotation', 'Rotator', 'Yaw'),
+            $math('BooleanOR',
+                $math('BooleanOR', $l('MapVisible'), $b->method($l('Player'), 'SophiaCharacter', 'IsPauseMenuVisible', [], FilterPointer($fn, 'MenuResult'))),
+                $math('BooleanOR', $b->method($l('Player'), 'SophiaCharacter', 'IsInPuzzleMode', [], FilterPointer($fn, 'MenuResult')), $b->method($l('Player'), 'SophiaCharacter', 'AreOtherInputWidgetsVisible', [FilterExpr('ObjectConst', ['Value' => 0])], FilterPointer($fn, 'MenuResult')))), $f(0.1)]),
+        $jump('Done'), ['label' => 'Invalid'], $set('SSRadarProgressPlayer', FilterExpr('ObjectConst', ['Value' => 0])), $setBool('SSRadarProgressAvailable', $bool(false)), $localCall('SSRadarRefreshPentadFocus'), $visible('SSRadarCanvas', 1), ['label' => 'Done']];
+    $b->define('SSRadarTick', [], ['Player' => 'Object', 'PlayerPosition' => 'Struct', 'PlayerRotation' => 'Struct', 'MapVisible' => 'Bool', 'MenuResult' => 'Bool'], $tick);
+    foreach (['OnInitialized', 'Construct'] as $event) {
+        $timerFunction = $b->functions[$event];
+        $events = [$localCall('SSRadarApplyView'), FilterExpr('Let', ['Value' => FilterPointer($timerFunction, 'Timer'), 'Variable' => FilterVariable($timerFunction, 'Timer'),
+            'Expression' => $b->call('KismetSystemLibrary', 'K2_SetTimer', [FilterExpr('Self'), FilterExpr('StringConst', ['Value' => 'SSRadarTick']), $f(0.1), $bool(true), $f(0), $f(0)])])];
+        if ($event === 'Construct') {
+            $settings = FilterVariable($timerFunction, 'Settings');
+            $events[] = FilterExpr('Let', ['Value' => FilterPointer($timerFunction, 'Settings'), 'Variable' => $settings, 'Expression' => $b->call('InputSettings', 'GetInputSettings')]);
+            $events[] = $b->method(FilterExpr('Self'), 'UserWidget', 'StopListeningForAllInputActions');
+            foreach ($shortcuts as $action => [, $callback]) {
+                $events[] = FilterExpr('Let', ['Value' => FilterPointer($timerFunction, 'InputMapping'), 'Variable' => FilterVariable($timerFunction, 'InputMapping'), 'Expression' => $state('SSRadarKey' . $action)]);
+                $events[] = $b->method($settings, 'InputSettings', 'AddActionMapping', [FilterVariable($timerFunction, 'InputMapping'), $bool(true)]);
+                $events[] = $b->method(FilterExpr('Self'), 'UserWidget', 'ListenForInputAction', [FilterExpr('NameConst', ['Value' => 'SaveStatsRadar' . $action]), FilterExpr('ByteConst', ['Value' => 0]), $bool(false), FilterExpr('InstanceDelegate', ['FunctionName' => $callback])]);
+            }
+        }
+        $b->define($event, [], ['Timer' => 'Struct', ...($event === 'Construct' ? ['Settings' => 'Object', 'InputMapping' => 'Struct'] : [])], $events, $event);
+    }
+    $b->define('Destruct', [], [], [$b->method(FilterExpr('Self'), 'UserWidget', 'StopListeningForAllInputActions'), $b->call('KismetSystemLibrary', 'K2_ClearTimer', [FilterExpr('Self'), FilterExpr('StringConst', ['Value' => 'SSRadarTick'])])], 'Destruct');
+    return [$b->finish(), ['assetPackage' => '/Game/SaveStats/WBP_SSOverlayRadar', 'className' => 'WBP_SSOverlayRadar_C',
+        'radiusCm' => 10000, 'radiusPresetsCm' => [5000, 10000, 20000, 40000], 'sizePresets' => [1, 1.25, 1.5], 'defaultSize' => 1.25,
+        'shortcuts' => ['toggle' => 'F8', 'zoomIn' => 'F3', 'zoomOut' => 'F4', 'size' => 'F10'], 'heightDeadbandCm' => 1000, 'pinLimit' => 24, 'candidateBudget' => 128, 'updateIntervalSeconds' => 0.1,
+        'candidateIntervalSeconds' => 0.5, 'displacementInvalidationCm' => 5000, 'indexedPoints' => count($index['positions']), 'gridWidth' => $index['width'], 'gridHeight' => $index['height'],
+        'functionNames' => array_keys($b->functions), 'selectionFunction' => 'SSRadarSetSelection', 'updateFunction' => 'SSRadarUpdate', 'initiallyHidden' => true,
+        'liveCompletion' => ['queryFunction' => 'SSRadarIsSolved', 'authority' => 'GISProgression.GetPuzzleSolveStatus', 'solvedField' => 'PuzzleSolveData.bSolved', 'statusStructBytes' => 40,
+            'unavailableReturnsSolved' => false, 'possibleSitePuzzleId' => 0, 'cachedOrdinaryStatusValues' => false, 'renderStatusChecksLimit' => 24,
+            'mapProgressDirtyField' => 'SSRadarMapProgressDirty', 'mapAcknowledgeFunction' => 'SSRadarAcknowledgeMapProgress'],
+        'specialCompletion' => $specialCompletion + ['loreAuthority' => 'GISProgression.GetEarnedLore; Find && earned value',
+            'monolithAuthority' => 'parent PuzzleSolveData.serializedProgress.Found[index]', 'malformedProgressReturnsSolved' => false,
+            'descriptorArrays' => ['SSRadarSpecialIds', 'SSRadarSpecialKinds', 'SSRadarSpecialKeys', 'SSRadarSpecialParentIds', 'SSRadarSpecialFragmentIndices']],
+        'specialCompletionCoverage' => ['lorePuzzles' => $specialCompletion['lore'], 'monolithFragments' => $specialCompletion['monolithFragments'], 'total' => $specialCompletion['descriptors']],
+        'hubAvailability' => ['queryFunction' => 'SSRadarIsPuzzleAvailable', 'refreshFunction' => 'SSRadarRefreshAvailability',
+            'zoneArray' => 'SSRadarHubAvailabilityZones', 'eligiblePuzzleIds' => count($hubPuzzleIds), 'eligiblePoints' => $hubPoints,
+            'eligibleTypeTags' => array_keys($hubTypeTags), 'zones' => array_keys($hubZones),
+            'authority' => 'PuzzleDatabase.GetAllActiveSandboxPuzzleDataOfTypeInZone', 'queryLimitPerRefresh' => 1,
+            'refreshZones' => [2, 3, 4, 5, 6], 'fullSweepRefreshCalls' => 5, 'sandboxProgressionRelevant' => true,
+            'readinessFields' => ['PuzzleDatabase.bInitialized', 'PuzzleDatabase.groupLifespan'],
+            'cacheIdentity' => ['local character', 'GameMode world anchor', 'database instance', 'selected type', 'group lifespan'],
+            'unreadyOrUnknownReturnsAvailable' => true, 'nullPuzzleDataReturnsAvailable' => true, 'emptyResultIsReadinessSignal' => false],
+        'activePentad' => ['selectedType' => 'seek5', 'refreshFunction' => 'SSRadarRefreshPentadFocus', 'focusField' => 'SSRadarFocusPuzzleId',
+            'authority' => 'SophiaCharacter.CharPuzzleComponent.GetCurrentSeek5', 'stateFunction' => 'Seek5.GetState', 'activeState' => 1,
+            'identityField' => 'PuzzleBase.KrakenId', 'cataloguedPentads' => count($pentadIds), 'requiresFiveDistinctRelics' => true,
+            'unavailableFocusId' => 0, 'overviewHidesRelics' => true, 'collectedRelicsHiddenIndividually' => true,
+            'relicVisibilityFunction' => 'SSRadarIsPentadRelicVisible', 'relicAuthority' => 'Seek5.HiddenObjects[].isFound',
+            'relicMatchSpace' => 'serialized local translation', 'relicMatchToleranceCm' => 0.05,
+            'relicMatchRequiresBijection' => true, 'relicComponentLimit' => 5, 'unknownRelicProgressRemainsVisible' => true],
+        'inputTransparent' => true, 'menuMethods' => ['SophiaCharacter.IsMapMenuVisible', 'SophiaCharacter.IsPauseMenuVisible', 'SophiaCharacter.IsInPuzzleMode', 'SophiaCharacter.AreOtherInputWidgetsVisible']]];
+}
+
+function RadarWidgetMain(array $argv): int
+{
+    $options = getopt('', ['base-widget:', 'radar-data:', 'output:', 'manifest:'], $next);
+    if ($next !== count($argv) || !isset($options['base-widget'], $options['radar-data'], $options['output'])) { throw new InvalidArgumentException('Usage: php radar_widget.php --base-widget FILE --radar-data FILE --output FILE [--manifest FILE]'); }
+    $base = json_decode(file_get_contents($options['base-widget']), false, 512, JSON_THROW_ON_ERROR);
+    $index = json_decode(file_get_contents($options['radar-data']), true, 512, JSON_THROW_ON_ERROR);
+    [$asset, $manifest] = BuildRadarWidget($base, $index);
+    file_put_contents($options['output'], json_encode($asset, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+    if (isset($options['manifest'])) { file_put_contents($options['manifest'], json_encode($manifest, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT) . "\n"); }
+    echo 'Generated radar with ' . count($asset->Exports) . " exports.\n";
+    return 0;
+}
+
+if (realpath($_SERVER['SCRIPT_FILENAME'] ?? '') === __FILE__) {
+    try { exit(RadarWidgetMain($argv)); }
+    catch (Throwable $error) { fwrite(STDERR, $error->getMessage() . "\n"); exit(1); }
+}
