@@ -1,0 +1,57 @@
+# Beta testing
+
+Test the exact package hash recorded in the beta's release manifest. Use the
+full Offline Restored Mod v1.6, and note any additional map or HUD mods. Keep an
+ordinary save backup before testing; no debug save or console command is needed.
+
+## Gameplay checklist
+
+- Start the game and open/close the map. Confirm normal map controls, hover
+  banners, quest panels and the map legend remain usable.
+- Select several puzzle types one at a time. Confirm the selected icon and
+  markers agree; clearing the selection removes the addon pins.
+- Scroll the puzzle list to both ends. The wheel should stay with the list
+  while the pointer is over it, without zooming the world map.
+- Enable the radar, close the map and move/turn. Check F8, F3, F4 and F10,
+  radius text, screen size and height carets. Open menus and a puzzle input
+  screen; the radar should hide and resume appropriately.
+- Solve a visible puzzle. Its map and radar pins should disappear without a
+  rebuild. For Matchboxes, both pins should disappear together.
+- Activate a Hidden Pentad. Confirm the radar focuses on its relics. Collect
+  one relic and check that only that relic disappears. Leave, complete or
+  switch Pentads and check that focus changes correctly.
+- Collect lore and a monolith fragment and check their markers disappear.
+- Enable possible spawn sites for a selected type. Confirm cyan potential-site
+  pins appear, then disappear when the option is off. A possible-site pin is
+  not a promise that a puzzle occupies that location.
+- Play in sparse and dense areas at several zoom levels. Report stutters or
+  delayed radar updates with location and type; do not infer an FPS improvement
+  solely from the engine regression tests.
+- Restart the game. It should start without a selected puzzle type. If testing
+  another existing save, verify marker visibility follows that save's progress.
+
+## What has already been checked
+
+The original universal build passed source/data/package checks, isolated
+fresh/mixed/completed progress tests, special collection lookups, current Hub
+availability, bounded index processing and active Pentad collection/reset tests.
+The data covers 293 Pentads and 1,465 relics; focused native collection tests used
+five cooked Pentads and 25 relics. Those checks establish regression evidence,
+not rendered FPS, every monitor layout or compatibility with every other mod.
+The extracted repository's build and package checks are recorded separately for
+the actual beta artifact.
+
+## Report a problem
+
+Include the addon version and package SHA256, base-mod version, other installed
+map/HUD mods, selected puzzle type, radar radius/size, and clear reproduction
+steps. For a marker issue, include the hover puzzle ID when available. For a UI
+issue, include display resolution and UI scaling with a screenshot.
+
+A short relevant log excerpt or crash message can help. Remove account IDs,
+personal paths and tokens before sharing. Do not attach a save, full crash
+directory or private build inputs to a public issue by default.
+
+If the game cannot start, close it and remove only
+`IslandsofInsight/Content/Paks/ZZ_SaveStatsMap_P.pak`. Retest with the full base
+mod installed, and report whether that resolves the crash.
