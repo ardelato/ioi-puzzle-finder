@@ -1,0 +1,87 @@
+<?php
+
+declare(strict_types=1);
+
+require_once dirname(__DIR__) . '/completion_metadata.php';
+require_once dirname(__DIR__) . '/markers.php';
+require_once dirname(__DIR__) . '/inject_markers.php';
+require_once dirname(__DIR__) . '/radar_data.php';
+
+function CompletionCheck(bool $condition, string $message): void
+{
+    if (!$condition) { throw new RuntimeException($message); }
+}
+
+function CompletionReject(callable $operation, string $message): void
+{
+    try { $operation(); } catch (InvalidArgumentException|RuntimeException) { return; }
+    throw new RuntimeException($message);
+}
+
+$point = (object)['x' => 1.0, 'y' => 2.0, 'z' => 3.0];
+$entry = static fn(int $pid, string $type, array $extra = []): object => (object)([
+    'pid' => $pid, 'ptype' => $type, 'family' => 'static', 'zoneIndex' => 4, 'coords' => [$point],
+] + $extra);
+$metadata = [$entry(41000, 'loreFragment', ['saveName' => 'A, Forgotten Name']),
+    $entry(42400, 'monolithFragment', ['parent' => '10681']), $entry(42401, 'monolithFragment', ['parent' => 10681]),
+    $entry(10681, 'obelisk'), $entry(17267, 'levelRestrictionVolume')];
+$raw = BuildOverlayData($metadata, [], [41000, 42400, 42401, 17267], []);
+$before = json_encode($raw, JSON_THROW_ON_ERROR);
+$enriched = EnrichOverlayCompletionMetadata($raw, $metadata);
+CompletionCheck(json_encode($raw, JSON_THROW_ON_ERROR) === $before, 'Completion enrichment must preserve its input.');
+CompletionCheck($enriched['specialCompletionCoverage'] === ['lorePuzzles' => 1, 'monolithFragments' => 2, 'total' => 3], 'Special coverage must count source identities.');
+CompletionCheck($enriched['markers']->{'41000'}['completion'] === ['kind' => 'lore', 'key' => 'A Forgotten Name'], 'Lore keys must use SaveStats comma normalization.');
+CompletionCheck($enriched['markers']->{'42400'}['completion'] === ['kind' => 'monolith', 'parentPid' => 10681, 'fragmentIndex' => 0]
+    && $enriched['markers']->{'42401'}['completion']['fragmentIndex'] === 1, 'Fragment IDs must bind the explicit parent and zero-based Found index.');
+CompletionCheck(!isset($enriched['markers']->{'17267'}['completion']), 'Entrance unlocks must retain ordinary native PID completion.');
+$stripped = unserialize(serialize($enriched)); unset($stripped['specialCompletionCoverage']);
+foreach ($stripped['markers'] as &$record) { unset($record['completion']); } unset($record);
+CompletionCheck(json_encode($stripped, JSON_THROW_ON_ERROR) === $before, 'Completion descriptors must preserve coordinates, roles, counts and other metadata.');
+$document = json_decode(json_encode(['schemaVersion' => 2] + $enriched, JSON_THROW_ON_ERROR));
+$points = ExpandOverlayMarkers($document);
+$index = BuildRadarIndex($points);
+$expected = [['pid' => 41000, 'kind' => 'lore', 'key' => 'A Forgotten Name'],
+    ['pid' => 42400, 'kind' => 'monolith', 'parentPid' => 10681, 'fragmentIndex' => 0],
+    ['pid' => 42401, 'kind' => 'monolith', 'parentPid' => 10681, 'fragmentIndex' => 1]];
+CompletionCheck($index['specialCompletions'] === $expected && BuildRadarIndex(array_reverse($points)) === $index, 'Special lookup must be unique, PID sorted and independent of spatial/source order.');
+$duplicate = clone $points[1]; $duplicate->actorName = 'second-location';
+CompletionCheck(BuildRadarIndex([...$points, $duplicate])['specialCompletions'] === $expected, 'Multiple locations must share one special completion lookup.');
+$conflict = clone $points[1]; $conflict->actorName = 'conflicting-location'; $conflict->completion = (object)['kind' => 'lore', 'key' => 'Other'];
+CompletionReject(fn() => BuildRadarIndex([...$points, $conflict]), 'Conflicting point descriptors were accepted.');
+$missing = clone $points[1]; $missing->actorName = 'missing-descriptor'; unset($missing->completion);
+CompletionReject(fn() => BuildRadarIndex([...$points, $missing]), 'Inconsistent missing completion descriptor was accepted.');
+foreach ([['kind' => 'lore', 'key' => ''], ['kind' => 'lore', 'key' => 'comma,key'], ['kind' => 'lore', 'key' => 'key', 'extra' => true],
+    ['kind' => 'unknown', 'key' => 'key'], null] as $descriptor) {
+    CompletionReject(fn() => ValidateOverlayCompletion($descriptor, 41000, 'loreFragment', 'static'), 'Malformed lore descriptor was accepted.');
+}
+foreach ([['kind' => 'monolith', 'parentPid' => 10681, 'fragmentIndex' => -1], ['kind' => 'monolith', 'parentPid' => 10681, 'fragmentIndex' => 1],
+    ['kind' => 'monolith', 'parentPid' => '10681', 'fragmentIndex' => 0]] as $descriptor) {
+    CompletionReject(fn() => ValidateOverlayCompletion($descriptor, 42400, 'monolithFragment', 'static'), 'Invalid parent or fragment index was accepted.');
+}
+$badMetadata = unserialize(serialize($metadata)); unset($badMetadata[0]->saveName);
+CompletionReject(fn() => EnrichOverlayCompletionMetadata($raw, $badMetadata), 'Missing lore metadata was accepted.');
+$badMetadata = unserialize(serialize($metadata)); $badMetadata[1]->parent = 41000;
+CompletionReject(fn() => EnrichOverlayCompletionMetadata($raw, $badMetadata), 'A non-obelisk fragment parent was accepted.');
+$badMetadata = unserialize(serialize($metadata)); $badMetadata[3]->zoneIndex = 3;
+CompletionReject(fn() => EnrichOverlayCompletionMetadata($raw, $badMetadata), 'A parent from another zone was accepted.');
+$site = (object)['actorName' => 'site', 'ptype' => 'spawnSite', 'group' => 'spawn', 'x' => 0, 'y' => 0, 'z' => 0,
+    'tags' => ['SaveStats.Type.loreFragment'], 'completion' => (object)['kind' => 'lore', 'key' => 'Key']];
+CompletionReject(fn() => BuildRadarIndex([$site]), 'A possible site gained a special completion identity.');
+
+$options = getopt('', ['catalog-markers:']);
+if (isset($options['catalog-markers'])) {
+    $catalog = json_decode(file_get_contents($options['catalog-markers']), false, 512, JSON_THROW_ON_ERROR);
+    $lore = $fragments = 0;
+    foreach ($catalog->markers as $record) {
+        if ($record->ptype === 'loreFragment') { $lore++; CompletionCheck(($record->completion->kind ?? '') === 'lore', 'Real lore descriptor missing.'); }
+        elseif ($record->ptype === 'monolithFragment') { $fragments++; CompletionCheck(($record->completion->kind ?? '') === 'monolith', 'Real fragment descriptor missing.'); }
+        else { CompletionCheck(!property_exists($record, 'completion'), 'An ordinary puzzle gained a special completion descriptor.'); }
+    }
+    $render = ExpandOverlayMarkers($catalog); $actual = BuildRadarIndex($render);
+    CompletionCheck(count($actual['specialCompletions']) === $lore + $fragments, 'Real marker expansion/radar index lost special descriptors.');
+    if (($catalog->source->catalogMode ?? '') === 'universal') {
+        CompletionCheck($lore === 98 && $fragments === 59 && count($actual['specialCompletions']) === 157, 'Full universal catalog must cover all98 lore and59 fragments.');
+    }
+    echo "Actual special completion pipeline passed ($lore lore; $fragments fragments).\n";
+}
+echo "Special completion metadata, descriptor validation and radar lookup checks passed.\n";
