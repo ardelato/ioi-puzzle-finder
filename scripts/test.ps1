@@ -9,7 +9,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path $PSScriptRoot -Parent
-$php = (Get-Command -Name $PhpPath -CommandType Application -ErrorAction Stop).Source
+$php = (Get-Command -Name $PhpPath -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $previousDataDir = $env:IOI_RADAR_TEST_DATA_DIR
 $previousAssetGui = $env:IOI_RADAR_ASSET_GUI
 
