@@ -1,0 +1,17 @@
+ioi-puzzle-radar 0.1.0-beta.1
+
+Addon for Islands of Insight with Offline Restored Mod v1.6.
+
+Asset JSON and texture helper code is adapted from RRMod_PuzzleFix by Rushin
+and contributors. The upstream MIT notice is retained in LICENSE.
+
+Location metadata and puzzle artwork are supplied by SaveStats. Game asset
+templates, modified game assets and referenced encyclopedia artwork originate
+from Islands of Insight and retain their respective owners' rights. The source
+code license does not grant rights to those game assets.
+
+UAssetGUI/UAssetAPI and UnrealPak are external build tools, not included here.
+The full base mod is a separately installed runtime dependency, not bundled.
+
+Source and attribution details: THIRD_PARTY_NOTICES.md.
+This project is not affiliated with or endorsed by the game's developer or publisher.
