@@ -2,7 +2,7 @@ name: Tests
 
 on:
   push:
-  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   synthetic:
+    if: github.ref == 'refs/heads/main'
     name: Synthetic regressions (${{ matrix.os }}, PHP 8.3)
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
