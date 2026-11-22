@@ -42,6 +42,9 @@ function AddHubAvailabilityProofToHud(object $base): object
 function BuildHubAvailabilityWorldFixture(string $output, string $build): array
 {
     $repo = dirname(__DIR__, 2);
+    $pak = $build . '/ZZ_IOIPuzzleRadar_P.pak';
+    if (!is_file($pak)) { $pak = $build . '/ZZ_SaveStatsMap_P.pak'; }
+    if (!is_file($pak)) { throw new RuntimeException('Missing production package in build directory.'); }
     $document = json_decode(file_get_contents($build . '/markers.json'), true, 512, JSON_THROW_ON_ERROR);
     $index = json_decode(file_get_contents($build . '/radar-data.json'), true, 512, JSON_THROW_ON_ERROR);
     $render = json_decode(file_get_contents($build . '/render-points.json'), true, 512, JSON_THROW_ON_ERROR)['renderPoints'];
@@ -246,7 +249,7 @@ function BuildHubAvailabilityWorldFixture(string $output, string $build): array
     file_put_contents($output.'/WBP_SSAvailabilityProof.json',json_encode($b->finish(),JSON_THROW_ON_ERROR));
     FixtureSaveAsset($output.'/WBP_GameHUD.json',AddHubAvailabilityProofToHud(json_decode(file_get_contents($build.'/WBP_GameHUD.json'),false,512,JSON_THROW_ON_ERROR)));
     foreach(['SSRadarPass','SSRadarFail']as$world){copy(OverlayTestDataPath('EngineFixtures/'.$world.'.json'),$output.'/'.$world.'.json');}
-    $result=['checks'=>count($checks),'checkDescriptions'=>$checks,'productionBuild'=>$build,'productionPakSha256'=>strtoupper(hash_file('sha256',$build.'/ZZ_SaveStatsMap_P.pak')),
+    $result=['checks'=>count($checks),'checkDescriptions'=>$checks,'productionBuild'=>$build,'productionPakSha256'=>strtoupper(hash_file('sha256', $pak)),
         'realWorldStartupRequired'=>true,'initializationSeeded'=>false,'nativeAssignmentMutated'=>false,'testHudAdditionalExports'=>2,
         'separateWidgetCacheSeam'=>['readyEmpty'=>'confirmed unavailable','unreadyEmpty'=>'unknown visible','nativeRosterUnchanged'=>true,'restoredByNativeRefresh'=>true],
         'byteIdenticalProductionRadarAndMapRequired'=>true,'reportedControl'=>11118,'fixedControls'=>[11118,11166,11144,11128,17201,17183],

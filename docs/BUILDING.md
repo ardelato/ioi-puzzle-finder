@@ -71,7 +71,7 @@ player-specific output is not suitable for distribution.
 
 The builder writes to a new output directory, verifies native serialization,
 original map/HUD functions, coverage and package entries, and produces
-`ZZ_SaveStatsMap_P.pak` with local build evidence. It does not install files into
+`ZZ_IOIPuzzleRadar_P.pak` with local build evidence. It does not install files into
 the game. Keep local logs, response files, raw manifests and decoded assets out
 of public release archives: they may contain absolute paths or game data.
 
@@ -103,7 +103,7 @@ or use an installed archive as a generated output path.
 
 ## Prepare a beta
 
-Use version `0.1.0-beta.1` from `VERSION`:
+The packager reads the beta version from `VERSION`:
 
 ```powershell
 .\scripts\package-beta.ps1 -BuildDirectory '.\output\build-EXAMPLE'
@@ -118,3 +118,16 @@ tested base-mod identity without local paths or save provenance.
 Follow [BETA-TESTING](BETA-TESTING.md), review the exact package, then create the
 GitHub prerelease as a separate publishing step. Creating or pushing a tag must
 not silently publish unreviewed local files.
+
+## Package filename
+
+`ZZ_SaveStatsMap_P.pak` was the prototype name. It described the original
+feature of showing SaveStats puzzle locations on the world map. Beta 1 shipped
+with that filename. `ZZ_IOIPuzzleRadar_P.pak` names the addon and its gameplay
+radar directly.
+
+The `ZZ_` prefix keeps the filename sorted after `RRMOD_PuzzleFix.pak`, as with
+the original overlay. The `_P` suffix follows
+[Unreal Engine's patch-package convention](https://dev.epicgames.com/documentation/en-us/unreal-engine/patching-overview?application_version=4.27).
+Move the old package outside the game's `Paks` folder when upgrading, so only
+one version of the overlay can load.

@@ -32,6 +32,9 @@ ordinary save backup before testing; no debug save or console command is needed.
 
 ## What has already been checked
 
+The maintainer reported that the beta was working in their play session on
+2026-11-22. The full gameplay checklist remains open.
+
 The original universal build passed source/data/package checks, isolated
 fresh/mixed/completed progress tests, special collection lookups, current Hub
 availability, bounded index processing and active Pentad collection/reset tests.
@@ -53,5 +56,7 @@ personal paths and tokens before sharing. Do not attach a save, full crash
 directory or private build inputs to a public issue by default.
 
 If the game cannot start, close it and remove only
-`IslandsofInsight/Content/Paks/ZZ_SaveStatsMap_P.pak`. Retest with the full base
-mod installed, and report whether that resolves the crash.
+your Puzzle Radar package from `IslandsofInsight/Content/Paks/`. The beta 1
+package was named `ZZ_SaveStatsMap_P.pak`. Later builds use
+`ZZ_IOIPuzzleRadar_P.pak`. Retest with the full base mod installed, and report
+whether that resolves the crash.
