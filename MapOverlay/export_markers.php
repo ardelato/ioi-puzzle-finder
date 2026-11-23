@@ -172,6 +172,9 @@ function ExportMarkersMain(array $argv): int
     try {
         require_once $saveStatsDirectory . '/include/file_io.php';
         require_once $saveStatsDirectory . $provider;
+        $puzzleMap = GetPuzzleMap();
+        // SaveStats leaves Mysteries out of its static list; add them as fixed-location puzzles.
+        $mysteries = GetOverlayMysteryPids($puzzleMap);
         $solvedPids = [];
         $sourceMetadata = [
             'catalogMode' => $catalogMode,
@@ -216,7 +219,7 @@ function ExportMarkersMain(array $argv): int
             }
             ValidateMarkerSave($rawSave);
             $solvedPids = GetAllSolvedPids($rawSave);
-            $staticRemainingPids = GetStaticRemainingPids($solvedPids);
+            $staticRemainingPids = array_merge(GetStaticRemainingPids($solvedPids), array_diff($mysteries, $solvedPids));
             $hubRemainingPids = ExtractAllPids(SubtractProfiles(GetHubProfile(), BuildProfile($solvedPids)));
             $sourceMetadata = [
                 'saveName' => basename($savePath),
@@ -227,10 +230,9 @@ function ExportMarkersMain(array $argv): int
         } else {
             // This metadata-only API is exactly GetStaticRemainingPids([]), without
             // loading the save parser or consulting a player profile/config file.
-            $staticRemainingPids = GetAllStaticPids();
+            $staticRemainingPids = array_merge(GetAllStaticPids(), $mysteries);
             $hubRemainingPids = ExtractAllPids(GetHubProfile());
         }
-        $puzzleMap = GetPuzzleMap();
         $overlay = BuildOverlayData($puzzleMap, $solvedPids, $staticRemainingPids, $hubRemainingPids, LoadCsv($spawnMetadataPath));
         $overlay = EnrichOverlayCompletionMetadata($overlay, $puzzleMap);
         $overlay = EnrichOverlayPentadMetadata($overlay, $nativeDatabase);
@@ -238,7 +240,7 @@ function ExportMarkersMain(array $argv): int
         $document = [
             'schemaVersion' => 2,
             'source' => $sourceMetadata,
-        ] + $overlay;
+        ] + $overlay + ['mysteryCoverage' => ['included' => $mysteries]];
         WriteMarkerJson($outputPath, $document);
         printf(
             "Exported %d located puzzles (%d render points), %d unlocated puzzles, and %d possible spawn sites (hidden by default) to %s\n",

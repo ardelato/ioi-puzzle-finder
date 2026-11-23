@@ -31,6 +31,18 @@ function OverlayLocalTranslation(mixed $transform): ?array
     return OverlayPosition(array_combine(['x', 'y', 'z'], $axes));
 }
 
+/** SaveStats "mystery" puzzles: hidden one-offs it keeps out of its static list. */
+function GetOverlayMysteryPids(array $puzzleMap): array
+{
+    $pids = [];
+    foreach ($puzzleMap as $entry) {
+        $pid = filter_var($entry->pid ?? null, FILTER_VALIDATE_INT);
+        if (($entry->family ?? '') === 'mystery' && $pid !== false && $pid > 0) { $pids[] = $pid; }
+    }
+    sort($pids, SORT_NUMERIC);
+    return $pids;
+}
+
 /** Keep every remaining ID, including dynamic puzzles whose locations are unknown. */
 function BuildOverlayData(array $puzzleMap, array $solvedPids, array $staticRemainingPids, array $hubRemainingPids, array $spawnRows = []): array
 {
@@ -75,7 +87,7 @@ function BuildOverlayData(array $puzzleMap, array $solvedPids, array $staticRema
             $record = [
                 'pid' => $pid, 'ptype' => $ptype, 'category' => (string)($entry->category ?? ''),
                 'zoneIndex' => (int)($entry->zoneIndex ?? -1), 'family' => (string)($entry->family ?? ''),
-                'group' => $group, 'label' => $catalog[$ptype]['name'] . ' #' . $pid, 'iconKey' => $ptype,
+                'group' => $group, 'label' => $catalog[$ptype]['name'] . ' #' . $pid . (($entry->family ?? '') === 'mystery' ? ' (Mystery)' : ''), 'iconKey' => $ptype,
             ];
             $coordinates = $entry->coords ?? [];
             $reason = !is_array($coordinates) ? 'invalid_coordinates' : ($coordinates === [] ? ($group === 'hub' ? 'dynamic_location_not_in_metadata' : 'missing_coordinates') : null);
@@ -89,7 +101,9 @@ function BuildOverlayData(array $puzzleMap, array $solvedPids, array $staticRema
                     }
                     $positions[] = $position;
                 }
-                if (($ptype === 'matchbox' && count($positions) !== 2) || ($ptype === 'seek5' && count($positions) !== 6)) {
+                // Mystery matchboxes (BP_MatchboxExternal/BP_MonolithMatch) are one-piece puzzles with a single anchor.
+                $singleMatchbox = $ptype === 'matchbox' && count($positions) === 1 && ($entry->family ?? '') === 'mystery';
+                if (($ptype === 'matchbox' && count($positions) !== 2 && !$singleMatchbox) || ($ptype === 'seek5' && count($positions) !== 6)) {
                     $reason = 'invalid_location_count';
                 }
             }
@@ -100,7 +114,7 @@ function BuildOverlayData(array $puzzleMap, array $solvedPids, array $staticRema
             }
             $geometry = 'point';
             $locations = [];
-            if ($ptype === 'matchbox') {
+            if ($ptype === 'matchbox' && count($positions) === 2) {
                 $geometry = 'pair';
                 foreach ($positions as $index => $position) {
                     $locations[] = OverlayLocation($index, 'box', 'Box ' . ($index + 1) . ' of 2', $position);
