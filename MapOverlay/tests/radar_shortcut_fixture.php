@@ -60,7 +60,7 @@ function BuildRadarShortcutFixture(string $output, string $world, ?int $probeChe
         $call('SSRadarInputSize'), $assert($equalInt('SSRadarSizeIndex', 2), 'F10 callback reaches 150 percent'),
         $call('SSRadarInputSize'), $assert($equalInt('SSRadarSizeIndex', 0), 'F10 callback wraps to 100 percent'),
         $call('SSRadarInputSize'), $assert($equalInt('SSRadarSizeIndex', 1), 'F10 callback returns to 125 percent'),
-        $assert($math('EqualEqual_NameName', $get('SSRadarSelectedTag'), $name('SaveStats.Type.hiddenCube')), 'shortcuts preserve selected puzzle'),
+        $assert($math('EqualEqual_IntInt', $get('SSRadarSelectedMask'), FilterExpr('IntConst', ['Value' => OverlayTypeBit('hiddenCube')])), 'shortcuts preserve selected puzzle'),
         $b->method($s('TimerRadar'), 'Widget', 'RemoveFromParent'),
         $assert($math('Not_PreBool', $listen('Toggle')), 'Destruct unregisters action listener'),
         $call('SSRadarInputToggle'), $assert($equalBool('SSRadarEnabled', true), 'detached stale radar rejects shortcut callback'),

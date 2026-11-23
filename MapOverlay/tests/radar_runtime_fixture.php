@@ -76,7 +76,7 @@ function BuildRadarRuntimeFixture(string $output, string $worldPath, bool $probe
         $assertPositions[] = count($code);
     };
     $select = static function (string $tag, bool $sites = false, bool $enabled = true) use (&$code, $l, $setSelection, $bool): void {
-        $code[] = RadarContext($l('Radar'), FilterCall($setSelection, [FilterExpr('NameConst', ['Value' => $tag]), $bool($sites), $bool($enabled)], 'FinalFunction'));
+        $code[] = RadarContext($l('Radar'), FilterCall($setSelection, [FilterExpr('IntConst', ['Value' => $tag === 'None' ? 0 : OverlayTypeBit(substr($tag, strlen('SaveStats.Type.')))]), $bool($sites), $bool($enabled)], 'FinalFunction'));
     };
     $step = static function (float $x = 0, float $y = 0, float $z = 0, float $yaw = 0, bool $hidden = false) use (&$code, $l, $update, $float, $bool): void {
         $code[] = RadarContext($l('Radar'), FilterCall($update, [$float($x), $float($y), $float($z), $float($yaw), $bool($hidden), $float(0.1)], 'FinalFunction'));
@@ -177,7 +177,13 @@ function BuildRadarRuntimeFixture(string $output, string $worldPath, bool $probe
     $assert($math('LessEqual_IntInt', $get('SSRadarVisitedLastUpdate'), $int(128)), '400m movement stays within callback budget');
     $step(12000, 0);
     $assert($intEqual($count(), 24), 'ordinary movement refresh preserves previous display');
-    $travel = static fn(string $n): object => $b->call('GameplayStatics', 'OpenLevel', [FilterExpr('Self'), FilterExpr('NameConst', ['Value' => '/Game/SaveStatsTests/' . $n]), $bool(true), FilterExpr('StringConst', ['Value' => '?game=/Script/Engine.GameModeBase'])]);
+    $setView(1, 1);
+    $code[] = RadarContext($l('Radar'), FilterCall($setSelection, [$int(OverlayTypeBit('hiddenCube') | OverlayTypeBit('logicGrid')), $bool(false), $bool(true)], 'FinalFunction'));
+    $step();
+    $assert($intEqual($count(), 5), 'multi-type mask merges both selected types inside 100m and skips unselected types');
+    $code[] = $let('HeightText', $b->method($get('SSRadarCaption'), 'TextBlock', 'GetText', [], FilterPointer($fn, 'HeightText')));
+    $assert($b->call('KismetTextLibrary', 'EqualEqual_TextText', [$l('HeightText'), $b->call('KismetTextLibrary', 'Conv_StringToText', [FilterExpr('StringConst', ['Value' => '2 puzzle types'])])]), 'multi-type caption counts selected types');
+    $travel =static fn(string $n): object => $b->call('GameplayStatics', 'OpenLevel', [FilterExpr('Self'), FilterExpr('NameConst', ['Value' => '/Game/SaveStatsTests/' . $n]), $bool(true), FilterExpr('StringConst', ['Value' => '?game=/Script/Engine.GameModeBase'])]);
     if ($probeCreate) { $code = [$code[0]]; $assertions = ['probe native radar creation']; }
     if ($probeChecks !== null) { $code = array_slice($code, 0, $assertPositions[$probeChecks - 1]); $assertions = array_slice($assertions, 0, $probeChecks); }
     $code[] = $travel('SSRadarPass');
