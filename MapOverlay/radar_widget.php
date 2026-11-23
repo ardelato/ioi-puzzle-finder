@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/filter_widget.php';
 require_once __DIR__ . '/radar_data.php';
 require_once __DIR__ . '/radar_special_completion.php';
+require_once __DIR__ . '/radar_labyrinth.php';
 
 /** Bytecode helpers kept separate from the established map generator. */
 function RadarExprSize(object $e): int
@@ -310,7 +311,7 @@ final class RadarWidgetBuilder
     }
 }
 
-function BuildRadarWidget(object $base, array $index): array
+function BuildRadarWidget(object $base, array $index, array $labyrinths = []): array
 {
     if (($index['schemaVersion'] ?? null) !== 1 || !isset($index['pointRanks'], $index['puzzleIds'], $index['pentadRelicIndices'], $index['hubAvailabilityZones'])
         || count($index['puzzleIds']) !== count($index['positions']) || count($index['pentadRelicIndices']) !== count($index['positions'])
@@ -433,10 +434,12 @@ function BuildRadarWidget(object $base, array $index): array
     $b->class->LoadedProperties[array_key_last($b->class->LoadedProperties)]->Inner->PropertyClass = $b->native['Texture2D'];
     $brush = static fn(int $resource): object => FilterStruct('Brush', 'SlateBrush', [FilterVector('ImageSize', 216, 216), OverlayProperty('Object', 'ResourceObject', $resource)]);
     $b->child('Image', 'SSRadarRing', [$brush($texture('SSRadRing'))], 108, 108, 216, 216);
-    $b->child('Image', 'SSRadarHeading', [$brush($texture('SSRadHead'))], 108, 108, 20, 20);
     $fontPkg = OverlayImport($b->asset, '/Game/ASophia/UI/Common/Font/lovato_demi_Font', 0, '/Script/CoreUObject', 'Package');
     $fontObj = OverlayImport($b->asset, 'lovato_demi_Font', $fontPkg, '/Script/Engine', 'Font');
     $font = static fn(int $size): object => FilterStruct('Font', 'SlateFontInfo', [OverlayProperty('Object', 'FontObject', $fontObj), OverlayProperty('Name', 'TypefaceFontName', 'Default'), OverlayProperty('Int', 'Size', $size)]);
+    // Labyrinth walls sit above the ring and beneath the heading arrow and pins.
+    AddRadarLabyrinthWidgets($b, $font, $labyrinths);
+    $b->child('Image', 'SSRadarHeading', [$brush($texture('SSRadHead'))], 108, 108, 20, 20);
     $b->child('TextBlock', 'SSRadarCaption', [OverlayText('Text', 'Puzzle radar'), $font(12), FilterEnum('Justification', 'ETextJustify', 'Center')], 108, 232, 232, 24);
     $b->child('TextBlock', 'SSRadarRange', [OverlayText('Text', '100 m'), $font(10), FilterEnum('Justification', 'ETextJustify', 'Center')], 108, 252, 216, 18);
     for ($pin = 0; $pin < 24; $pin++) {
@@ -444,7 +447,7 @@ function BuildRadarWidget(object $base, array $index): array
         $b->child('TextBlock', 'SSRadarHeight' . $pin, [OverlayText('Text', ''), $font(11), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed')], 120, 99, 14, 16);
     }
     foreach (['SSRadarSetSelection', 'SSRadarSetView', 'SSRadarApplyView', 'SSRadarChangeZoom', 'SSRadarCycleSize', 'SSRadarToggleEnabled', 'SSRadarIsSolved', 'SSRadarAcknowledgeMapProgress',
-        'SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable', 'SSRadarRefreshPentadFocus', 'SSRadarIsPentadRelicVisible', 'SSRadarMatchesPentadFocus', 'SSRadarHandleShortcut', ...array_column($shortcuts, 1), 'SSRadarApplyIcon', 'SSRadarStartScan', 'SSRadarScan', 'SSRadarRender', 'SSRadarUpdate', 'SSRadarTick', 'OnInitialized', 'Construct', 'Destruct'] as $fn) { $b->reserve($fn); }
+        'SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable', 'SSRadarRefreshPentadFocus', 'SSRadarIsPentadRelicVisible', 'SSRadarMatchesPentadFocus', 'SSRadarHandleShortcut', ...array_column($shortcuts, 1), 'SSRadarApplyIcon', 'SSRadarStartScan', 'SSRadarScan', 'SSRadarRender', 'SSRadarInitMaze', 'SSRadarRefreshMaze', 'SSRadarRenderMaze', 'SSRadarUpdate', 'SSRadarTick', 'OnInitialized', 'Construct', 'Destruct'] as $fn) { $b->reserve($fn); }
     $specialCompletion = AddRadarSpecialCompletion($b, $index['specialCompletions'] ?? []);
     $makeVec = static fn(object $x, object $y): object => $math('MakeVector2D', $x, $y);
     $labelText = static fn(string $n, string $text): object => $b->method($state($n), 'TextBlock', 'SetText', [$b->call('KismetTextLibrary', 'Conv_StringToText', [FilterExpr('StringConst', ['Value' => $text])])]);
@@ -832,9 +835,9 @@ function BuildRadarWidget(object $base, array $index): array
             $unless($math('Not_PreBool', $localCall('SSRadarIsSolved', [$l('PuzzleId')])), 'Solved' . $pin),
             $array('Array_Get', $state('SSRadarX'), $l('Point'), $l('X')), $array('Array_Get', $state('SSRadarY'), $l('Point'), $l('Y')), $array('Array_Get', $state('SSRadarZ'), $l('Point'), $l('Z')),
             $let('DX', $math('Subtract_FloatFloat', $l('X'), $state('SSRadarPlayerX'))), $let('DY', $math('Subtract_FloatFloat', $l('Y'), $state('SSRadarPlayerY'))),
-            $unless($math('LessEqual_FloatFloat', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('DX'), $l('DX')), $math('Multiply_FloatFloat', $l('DY'), $l('DY'))), $math('Multiply_FloatFloat', $state('SSRadarRadiusCm'), $state('SSRadarRadiusCm'))), 'Hide' . $pin),
-            $let('ScreenX', $math('Multiply_FloatFloat', $math('Subtract_FloatFloat', $math('Multiply_FloatFloat', $l('DY'), $l('Cos')), $math('Multiply_FloatFloat', $l('DX'), $l('Sin'))), $math('Divide_FloatFloat', $f(96), $state('SSRadarRadiusCm')))),
-            $let('ScreenY', $math('Multiply_FloatFloat', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('DX'), $l('Cos')), $math('Multiply_FloatFloat', $l('DY'), $l('Sin'))), $math('Divide_FloatFloat', $f(-96), $state('SSRadarRadiusCm')))),
+            $unless($math('LessEqual_FloatFloat', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('DX'), $l('DX')), $math('Multiply_FloatFloat', $l('DY'), $l('DY'))), $math('Multiply_FloatFloat', $state('SSRadarViewRadiusCm'), $state('SSRadarViewRadiusCm'))), 'Hide' . $pin),
+            $let('ScreenX', $math('Multiply_FloatFloat', $math('Subtract_FloatFloat', $math('Multiply_FloatFloat', $l('DY'), $l('Cos')), $math('Multiply_FloatFloat', $l('DX'), $l('Sin'))), $math('Divide_FloatFloat', $f(96), $state('SSRadarViewRadiusCm')))),
+            $let('ScreenY', $math('Multiply_FloatFloat', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('DX'), $l('Cos')), $math('Multiply_FloatFloat', $l('DY'), $l('Sin'))), $math('Divide_FloatFloat', $f(-96), $state('SSRadarViewRadiusCm')))),
             $b->method($state('SSRadarPin' . $pin), 'Widget', 'SetRenderTranslation', [$makeVec($l('ScreenX'), $l('ScreenY'))]),
             $b->method($state('SSRadarHeight' . $pin), 'Widget', 'SetRenderTranslation', [$makeVec($l('ScreenX'), $l('ScreenY'))]),
             $array('Array_Get', $state('SSRadarSpawn'), $l('Point'), $l('Spawn')),
@@ -858,16 +861,21 @@ function BuildRadarWidget(object $base, array $index): array
     foreach ($b->asset->Exports[$fn - 1]->LoadedProperties as $property) {
         if ($property->Name === 'Texture') { $property->PropertyClass = $b->native['Texture2D']; }
     }
+    $labyrinth = AddRadarLabyrinthFunctions($b);
     $fn = $b->functions['SSRadarUpdate'];
     $p = static fn(string $n): object => FilterVariable($fn, $n);
     $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $e]);
     $distanceSquared = static fn(object $x, object $y): object => $math('Add_FloatFloat', $math('Multiply_FloatFloat', $x, $x), $math('Multiply_FloatFloat', $y, $y));
     $update = [$set('SSRadarVisitedLastUpdate', $i(0)), $localCall('SSRadarRefreshPentadFocus'), $localCall('SSRadarRefreshAvailability'),
-        $unless($math('BooleanAND', $state('SSRadarEnabled'), $math('BooleanAND', $math('Not_PreBool', $p('MenuHidden')), $math('NotEqual_IntInt', $state('SSRadarSelectedMask'), $i(0)))), 'Hidden'),
+        $unless($math('BooleanAND', $state('SSRadarEnabled'), $math('Not_PreBool', $p('MenuHidden'))), 'Hidden'),
         FilterExpr('LetBool', ['VariableExpression' => $p('Teleported'), 'AssignmentExpression' => $math('Greater_FloatFloat', $distanceSquared($math('Subtract_FloatFloat', $p('PlayerX'), $state('SSRadarPlayerX')), $math('Subtract_FloatFloat', $p('PlayerY'), $state('SSRadarPlayerY'))), $f(25000000))]),
         $set('SSRadarPlayerX', $p('PlayerX')), $set('SSRadarPlayerY', $p('PlayerY')), $set('SSRadarPlayerZ', $p('PlayerZ')), $set('SSRadarYaw', $p('HeadingYaw')),
-        // Hidden when none of the selected types is indexed by this radar.
-        $unless($math('NotEqual_IntInt', $math('And_IntInt', $state('SSRadarSelectedMask'), $i($radarMask)), $i(0)), 'Hidden'),
+        // Inside a Crystal Labyrinth the radar shows its current floor, even with no puzzle types ticked.
+        $localCall('SSRadarRefreshMaze', [$p('PlayerX'), $p('PlayerY'), $p('PlayerZ')]),
+        $set('SSRadarViewRadiusCm', $math('SelectFloat', $state('SSRadarMazeRadiusCm'), $state('SSRadarRadiusCm'), $state('SSRadarMazeActive'))),
+        $unless($math('BooleanOR', $math('NotEqual_IntInt', $state('SSRadarSelectedMask'), $i(0)), $state('SSRadarMazeActive')), 'Hidden'),
+        // Without indexed selected types only the labyrinth layer is drawn.
+        $unless($math('NotEqual_IntInt', $math('And_IntInt', $state('SSRadarSelectedMask'), $i($radarMask)), $i(0)), 'MazeOnly'),
         $let('CellX', $floorCell($p('PlayerX'), $index['originCellX'])), $let('CellY', $floorCell($p('PlayerY'), $index['originCellY'])),
         $unless($math('BooleanOR', $state('SSRadarDirty'), $p('Teleported')), 'Movement'),
         $array('Array_Clear', $state('SSRadarDisplayIndices')), $jump('Restart'),
@@ -879,7 +887,10 @@ function BuildRadarWidget(object $base, array $index): array
         ['label' => 'Unchanged'], $visible('SSRadarCanvas', 3),
         $unless($state('SSRadarScanActive'), 'Wait'), $localCall('SSRadarScan'), $jump('Render'),
         ['label' => 'Wait'], $set('SSRadarWait', $math('Subtract_FloatFloat', $state('SSRadarWait'), $p('DeltaSeconds'))), $unless($math('LessEqual_FloatFloat', $state('SSRadarWait'), $f(0)), 'Render'), $localCall('SSRadarStartScan'), $localCall('SSRadarScan'),
-        ['label' => 'Render'], $localCall('SSRadarRender'), $jump('Done'), ['label' => 'Hidden'], $visible('SSRadarCanvas', 1), ['label' => 'Done']];
+        ['label' => 'Render'], $localCall('SSRadarRender'), $localCall('SSRadarRenderMaze'), $jump('Done'),
+        // No indexed type is selected, so no pin may stay on screen.
+        ['label' => 'MazeOnly'], $visible('SSRadarCanvas', 3), $array('Array_Clear', $state('SSRadarDisplayIndices')), $localCall('SSRadarRender'), $localCall('SSRadarRenderMaze'), $jump('Done'),
+        ['label' => 'Hidden'], $visible('SSRadarCanvas', 1), ['label' => 'Done']];
     $b->define('SSRadarUpdate', ['PlayerX' => 'Float', 'PlayerY' => 'Float', 'PlayerZ' => 'Float', 'HeadingYaw' => 'Float', 'MenuHidden' => 'Bool', 'DeltaSeconds' => 'Float'], ['CellX' => 'Int', 'CellY' => 'Int', 'Teleported' => 'Bool'], $update);
     // Per-zone counts for the map: fixed puzzles plus Hub puzzles the game currently has active.
     // Work runs only while the map keeps asking (SSRadarRequestCounts), in small per-tick slices.
@@ -1046,16 +1057,20 @@ function BuildRadarWidget(object $base, array $index): array
             'relicVisibilityFunction' => 'SSRadarIsPentadRelicVisible', 'relicAuthority' => 'Seek5.HiddenObjects[].isFound',
             'relicMatchSpace' => 'serialized local translation', 'relicMatchToleranceCm' => 0.05,
             'relicMatchRequiresBijection' => true, 'relicComponentLimit' => 5, 'unknownRelicProgressRemainsVisible' => true],
+        'labyrinth' => $labyrinth + ['handmadeLabyrinths' => count($labyrinths), 'handmadePuzzleIds' => array_column($labyrinths, 'pid'),
+            'handmadeFloors' => array_sum(array_map(static fn(array $l): int => count($l['floors']), $labyrinths)),
+            'handmadeWalls' => array_sum(array_map(static fn(array $l): int => array_sum(array_map(static fn(array $f): int => count($f['walls']), $l['floors'])), $labyrinths))],
         'inputTransparent' => true, 'menuMethods' => ['SophiaCharacter.IsMapMenuVisible', 'SophiaCharacter.IsPauseMenuVisible', 'SophiaCharacter.IsInPuzzleMode', 'SophiaCharacter.AreOtherInputWidgetsVisible']]];
 }
 
 function RadarWidgetMain(array $argv): int
 {
-    $options = getopt('', ['base-widget:', 'radar-data:', 'output:', 'manifest:'], $next);
-    if ($next !== count($argv) || !isset($options['base-widget'], $options['radar-data'], $options['output'])) { throw new InvalidArgumentException('Usage: php radar_widget.php --base-widget FILE --radar-data FILE --output FILE [--manifest FILE]'); }
+    $options = getopt('', ['base-widget:', 'radar-data:', 'output:', 'manifest:', 'labyrinths:'], $next);
+    if ($next !== count($argv) || !isset($options['base-widget'], $options['radar-data'], $options['output'])) { throw new InvalidArgumentException('Usage: php radar_widget.php --base-widget FILE --radar-data FILE --output FILE [--manifest FILE] [--labyrinths FILE]'); }
     $base = json_decode(file_get_contents($options['base-widget']), false, 512, JSON_THROW_ON_ERROR);
     $index = json_decode(file_get_contents($options['radar-data']), true, 512, JSON_THROW_ON_ERROR);
-    [$asset, $manifest] = BuildRadarWidget($base, $index);
+    $labyrinths = isset($options['labyrinths']) ? (json_decode(file_get_contents($options['labyrinths']), true, 512, JSON_THROW_ON_ERROR)['labyrinths'] ?? []) : [];
+    [$asset, $manifest] = BuildRadarWidget($base, $index, $labyrinths);
     file_put_contents($options['output'], json_encode($asset, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
     if (isset($options['manifest'])) { file_put_contents($options['manifest'], json_encode($manifest, JSON_THROW_ON_ERROR | JSON_PRETTY_PRINT) . "\n"); }
     echo 'Generated radar with ' . count($asset->Exports) . " exports.\n";
