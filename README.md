@@ -65,6 +65,15 @@ session starts with nothing ticked. The radar hides during menus and puzzle
 input. Fixed puzzle pins follow live progress and clear when the game records
 a solve.
 
+Inside a Crystal Labyrinth, the radar shows the floor you are on: white lines
+for solid walls, blue lines for glass, red squares for gaps in the floor you can
+fall through, and **^** / **v** where a passage (in the Vault of the Vitric, a
+jump pad and the shaft above it) leads to the floor above or below. The radar zooms to fit the labyrinth and shows *Floor N
+of M* under the ring; it appears even with no puzzle types ticked, also for
+labyrinths you have already solved, and returns to normal when you leave. Hub
+labyrinths and the seven in the Vault of the Vitric are drawn; the other
+handmade labyrinths are not yet.
+
 ## Compatibility and feedback
 
 The release ZIP includes everything needed for the addon once the full base
