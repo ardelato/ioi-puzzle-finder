@@ -177,4 +177,7 @@ CheckRadarHud(($markerCalls['EqualEqual_ByteByte'] ?? 0) === 8 && ($markerCalls[
 $updateCode = $radarExports['SSRadarUpdate']->ScriptBytecode;
 $renderMarkers = $exportIndex('SSRadarRenderMarkers');
 CheckRadarHud(count(array_filter($updateCode, static fn(object $e): bool => ($e->StackNode ?? null) === $renderMarkers)) === 1, 'Every visible update must render the map markers once.');
+// The enabled/menu gate must not hide an empty selection: only the pin path branches on it.
+$selectionJumps = array_filter($updateCode, static fn(object $e): bool => str_contains($e->{'$type'}, 'EX_JumpIfNot') && str_contains(json_encode($e->BooleanExpression, JSON_THROW_ON_ERROR), '"SSRadarSelectedMask"'));
+CheckRadarHud(count($selectionJumps) === 1, 'An enabled radar must show with no puzzle type selected.');
 echo "HUD radar embedding checks passed: native functions, lifecycle host, input transparency, placement, duplicate rejection, the multi-type selection mask, and map markers.\n";

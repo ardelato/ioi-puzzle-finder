@@ -17,8 +17,9 @@ ordinary save backup before testing; no debug save or console command is needed.
   screen; the radar should hide and resume appropriately.
 - Place two custom map markers, one near and one far. The near one should show
   its icon at its position; the far one a rim arrow pointing at it with its
-  distance, turning as you turn. Remove the markers and check they leave the
-  radar.
+  distance, turning as you turn. Untick every type: the radar should stay up
+  with only the markers. Remove the markers and check they leave the radar
+  while it stays up.
 - After a few seconds of play, open the map and tick a Hub type (e.g.
   Matchbox). Only currently active Hub puzzles should appear, with no brief
   burst of extra pins.

@@ -62,7 +62,8 @@ The radar shows the ticked types, each pin with its type's icon. The distance
 under the radar is its radius. Up and down carets mark puzzles more than
 10 metres above or below you. Your custom map markers always appear: within
 range at their position, farther away as a cyan arrow on the rim with their
-distance. Settings last for the current session; a new
+distance. While enabled, the radar stays up even when no puzzle type is
+ticked. Settings last for the current session; a new
 session starts with nothing ticked. The radar hides during menus and puzzle
 input. Fixed puzzle pins follow live progress and clear when the game records
 a solve.

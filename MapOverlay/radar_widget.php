@@ -952,12 +952,12 @@ function BuildRadarWidget(object $base, array $index): array
     $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $e]);
     $distanceSquared = static fn(object $x, object $y): object => $math('Add_FloatFloat', $math('Multiply_FloatFloat', $x, $x), $math('Multiply_FloatFloat', $y, $y));
     $update = [$set('SSRadarVisitedLastUpdate', $i(0)), $localCall('SSRadarRefreshPentadFocus'), $localCall('SSRadarRefreshAvailability'),
-        $unless($math('BooleanAND', $state('SSRadarEnabled'), $math('BooleanAND', $math('Not_PreBool', $p('MenuHidden')), $math('NotEqual_IntInt', $state('SSRadarSelectedMask'), $i(0)))), 'Hidden'),
+        $unless($math('BooleanAND', $state('SSRadarEnabled'), $math('Not_PreBool', $p('MenuHidden'))), 'Hidden'),
         FilterExpr('LetBool', ['VariableExpression' => $p('Teleported'), 'AssignmentExpression' => $math('Greater_FloatFloat', $distanceSquared($math('Subtract_FloatFloat', $p('PlayerX'), $state('SSRadarPlayerX')), $math('Subtract_FloatFloat', $p('PlayerY'), $state('SSRadarPlayerY'))), $f(25000000))]),
         $set('SSRadarPlayerX', $p('PlayerX')), $set('SSRadarPlayerY', $p('PlayerY')), $set('SSRadarPlayerZ', $p('PlayerZ')), $set('SSRadarYaw', $p('HeadingYaw')),
         $localCall('SSRadarRenderMarkers'),
-        // Hidden when none of the selected types is indexed by this radar.
-        $unless($math('NotEqual_IntInt', $math('And_IntInt', $state('SSRadarSelectedMask'), $i($radarMask)), $i(0)), 'Hidden'),
+        // Without a selected type this radar indexes, it still shows: map markers, heading and range.
+        $unless($math('NotEqual_IntInt', $math('And_IntInt', $state('SSRadarSelectedMask'), $i($radarMask)), $i(0)), 'NoTypes'),
         $let('CellX', $floorCell($p('PlayerX'), $index['originCellX'])), $let('CellY', $floorCell($p('PlayerY'), $index['originCellY'])),
         $unless($math('BooleanOR', $state('SSRadarDirty'), $p('Teleported')), 'Movement'),
         $array('Array_Clear', $state('SSRadarDisplayIndices')), $jump('Restart'),
@@ -969,7 +969,10 @@ function BuildRadarWidget(object $base, array $index): array
         ['label' => 'Unchanged'], $visible('SSRadarCanvas', 3),
         $unless($state('SSRadarScanActive'), 'Wait'), $localCall('SSRadarScan'), $jump('Render'),
         ['label' => 'Wait'], $set('SSRadarWait', $math('Subtract_FloatFloat', $state('SSRadarWait'), $p('DeltaSeconds'))), $unless($math('LessEqual_FloatFloat', $state('SSRadarWait'), $f(0)), 'Render'), $localCall('SSRadarStartScan'), $localCall('SSRadarScan'),
-        ['label' => 'Render'], $localCall('SSRadarRender'), $jump('Done'), ['label' => 'Hidden'], $visible('SSRadarCanvas', 1), ['label' => 'Done']];
+        ['label' => 'Render'], $localCall('SSRadarRender'), $jump('Done'),
+        // Selection changes clear the display list, so this render hides every puzzle pin.
+        ['label' => 'NoTypes'], $localCall('SSRadarRender'), $visible('SSRadarCanvas', 3), $jump('Done'),
+        ['label' => 'Hidden'], $visible('SSRadarCanvas', 1), ['label' => 'Done']];
     $b->define('SSRadarUpdate', ['PlayerX' => 'Float', 'PlayerY' => 'Float', 'PlayerZ' => 'Float', 'HeadingYaw' => 'Float', 'MenuHidden' => 'Bool', 'DeltaSeconds' => 'Float'], ['CellX' => 'Int', 'CellY' => 'Int', 'Teleported' => 'Bool'], $update);
     // Per-zone counts for the map: fixed puzzles plus Hub puzzles the game currently has active.
     // Work runs only while the map keeps asking (SSRadarRequestCounts), in small per-tick slices.
@@ -1116,7 +1119,7 @@ function BuildRadarWidget(object $base, array $index): array
             'entryStruct' => 'LocationPingInfo', 'typeField' => 'PingType', 'mapMarkerType' => 'ELocationPingType::MapMarker = 0', 'positionField' => 'Loc',
             'inRange' => 'game MapMarker icon at its position', 'outOfRange' => 'cyan SSRadHead arrow on the rim (98 px) with its distance inside (74 px)',
             'distanceText' => ['belowOneKm' => 'N m', 'fromOneKm' => 'N.N km', 'measure' => '3D straight-line from the player (height included); placement and range use horizontal distance'], 'independentOfSelection' => true,
-            'runtimeVerified' => true],
+            'visibleWithoutSelectedTypes' => 'always while enabled: markers, heading and range, no puzzle pins', 'runtimeVerified' => true],
         'liveCompletion' => ['queryFunction' => 'SSRadarIsSolved', 'authority' => 'GISProgression.GetPuzzleSolveStatus', 'solvedField' => 'PuzzleSolveData.bSolved', 'statusStructBytes' => 40,
             'unavailableReturnsSolved' => false, 'possibleSitePuzzleId' => 0, 'cachedOrdinaryStatusValues' => false, 'renderStatusChecksLimit' => 24,
             'mapProgressDirtyField' => 'SSRadarMapProgressDirty', 'mapAcknowledgeFunction' => 'SSRadarAcknowledgeMapProgress'],
