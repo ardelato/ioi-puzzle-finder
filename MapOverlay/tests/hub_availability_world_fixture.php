@@ -189,11 +189,11 @@ function BuildHubAvailabilityWorldFixture(string $output, string $build): array
     $select=static function(string$type,bool$sites=false)use(&$run,$put,$property,$s,$classes,$name,$set,$str,$truth,$mapGet,$call,$assert,$get,$math,$i,$hubTypes):void{
         $run[]=$set('ProofType',$str($type));$run[]=$call('Map','SSOverlayClearTypes');$run[]=FilterExpr('LetBool',['VariableExpression'=>$property($s('Map'),$classes['Map'],'SSOverlayType_'.$type),'AssignmentExpression'=>FilterExpr('True')]);
         $run[]=FilterExpr('LetBool',['VariableExpression'=>$mapGet('SSOverlaySource_spawn'),'AssignmentExpression'=>$truth($sites)]);$run[]=$call('Map','SSOverlayRefresh');
-        for($n=0;$n<5;$n++){$run[]=$call('Radar','SSRadarRefreshAvailability');$run[]=$assert($math('LessEqual_IntInt',$get('SSRadarAvailabilityQueriesLastRefresh'),$i(1)),'warmup performs one zone enumeration per refresh call');}
-        if(in_array('SaveStats.Type.'.$type,$hubTypes,true)){foreach(range(2,6)as$zone){$run[]=$assert($get('SSRadarAvailabilityZoneReady'.$zone),'initialized zone'.$zone.' cached after five refreshes');}}
+        for($n=0;$n<5*count($hubTypes);$n++){$run[]=$call('Radar','SSRadarRefreshAvailability');$run[]=$assert($math('LessEqual_IntInt',$get('SSRadarAvailabilityQueriesLastRefresh'),$i(1)),'warmup performs one zone enumeration per refresh call');}
+        if(in_array('SaveStats.Type.'.$type,$hubTypes,true)){foreach(range(2,6)as$zone){$run[]=$assert($get('SSRadarAvailabilityZoneReady'.$zone),'initialized zone'.$zone.' cached after one full type-by-zone sweep');}}
         $run[]=$call('Map','SSOverlayRefresh');$run[]=$call('Radar','SSRadarAcknowledgeMapProgress');
-        for($n=0;$n<5;$n++){$run[]=$call('Radar','SSRadarRefreshAvailability');}
-        $run[]=$assert($math('Not_PreBool',$get('SSRadarMapProgressDirty')),'unchanged five-zone roster does not repeatedly invalidate map or dense scan');
+        for($n=0;$n<5*count($hubTypes);$n++){$run[]=$call('Radar','SSRadarRefreshAvailability');}
+        $run[]=$assert($math('Not_PreBool',$get('SSRadarMapProgressDirty')),'unchanged full-sweep roster does not repeatedly invalidate map or dense scan');
     };
     $check=static function(array$point)use($b,$i,$str,$f,$pointIndex):object{return FilterCall($b->functions['CheckControl'],[$i($point['group']==='spawn'?0:$point['pid']),$i($point['hubAvailabilityZone']),$i($pointIndex($point)),$str($point['actorName']),$f($point['x']),$f($point['y']),$f($point['z'])],'LocalFinalFunction');};
     $select('seek5');
@@ -215,7 +215,7 @@ function BuildHubAvailabilityWorldFixture(string $output, string $build): array
         $run[]=$call('Radar','SSRadarAcknowledgeMapProgress');
         $run[]=FilterExpr('LetBool',['VariableExpression'=>$get('SSRadarDirty'),'AssignmentExpression'=>$truth(false)]);
         $run[]=FilterExpr('LetBool',['VariableExpression'=>$get('SSRadarScanActive'),'AssignmentExpression'=>$truth(true)]);
-        for($refresh=0;$refresh<5;$refresh++){$run[]=$call('Radar','SSRadarRefreshAvailability');}
+        for($refresh=0;$refresh<5*count($hubTypes);$refresh++){$run[]=$call('Radar','SSRadarRefreshAvailability');}
         $run[]=$assert($get('SSRadarAvailabilityZoneReady6'),'native full refresh cycle restores zone readiness after cache-only seam');
         $run[]=$assert($call('Radar','SSRadarIsPuzzleAvailable',[$i($point['pid']),$i(6)],FilterPointer($fn,'Boolean')),'native full refresh cycle restores actual available membership');
         $run[]=$assert($get('SSRadarDirty'),'restoring native membership invalidates cached candidate search');

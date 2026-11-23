@@ -74,10 +74,34 @@ CheckRadarHud($textureNames === array_map(static fn(string $key): string => GetO
 $scanCode = json_encode([$radarFunctions['SSRadarScan']->ScriptBytecode, $radarFunctions['SSRadarStartScan']->ScriptBytecode], JSON_THROW_ON_ERROR);
 CheckRadarHud(str_contains($scanCode, '"SSRadarTypeBits"') && str_contains($scanCode, '"SSRadarSelectedMask"') && str_contains($scanCode, '"SSRadarScanType"') && str_contains($scanCode, '"SSRadarMinRow"'), 'Radar scan must walk every type selected in SSRadarSelectedMask.');
 CheckRadarHud(str_contains(json_encode($radarFunctions['SSRadarRender']->ScriptBytecode, JSON_THROW_ON_ERROR), '"SSRadarTypeTextures"') && isset($radarFields['SSRadarPinType23']) && $radarDefaults['SSRadarPinType0']->Value === -1, 'Radar pins must take icons from their own point type with a per-pin cache.');
-CheckRadarHud(!isset($radarFields['SSRadarHubTypeTags']) && isset($radarFields['SSRadarAvailabilityMask']) && !isset($radarFields['SSRadarAvailabilityTag']), 'Hub availability must be keyed on the selection mask.');
+// Hub availability covers every Hub-capable type, so a selection change never empties it
+// (an empty cache is fail-visible and flashed inactive Hub puzzles on the map).
+CheckRadarHud(!isset($radarFields['SSRadarHubTypeTags']) && !isset($radarFields['SSRadarAvailabilityMask']) && !isset($radarFields['SSRadarAvailabilityTag'])
+    && isset($radarFields['SSRadarAvailabilityTypeCursor'], $radarFields['SSRadarAvailabilityWork'], $radarFields['SSRadarAvailabilityWorkUnknown']), 'Hub availability must not be keyed on the selection.');
+foreach (['SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable'] as $availabilityFunction) {
+    CheckRadarHud(!str_contains(json_encode($radarFunctions[$availabilityFunction]->ScriptBytecode, JSON_THROW_ON_ERROR), '"Path":["SSRadarSelectedMask"]'), "{$availabilityFunction} must not depend on the selected types.");
+}
+// Visit every imported native call in some bytecode as (name, call node).
+$eachCall = static function (mixed $code, callable $visit) use ($radar): void {
+    $walk = static function (mixed $value) use (&$walk, $visit, $radar): void {
+        if (is_object($value)) {
+            if (isset($value->StackNode) && is_int($value->StackNode) && $value->StackNode < 0) { $visit($radar->Imports[-1 - $value->StackNode]->ObjectName, $value); }
+            foreach ((array)$value as $child) { $walk($child); }
+        } elseif (is_array($value)) { foreach ($value as $child) { $walk($child); } }
+    };
+    $walk($code);
+};
+$availabilityCalls = 0;
+$eachCall($radarFunctions['SSRadarRefreshAvailability']->ScriptBytecode, static function (string $name, object $call) use (&$availabilityCalls): void {
+    if ($name !== 'GetAllActiveSandboxPuzzleDataOfTypeInZone') { return; }
+    $availabilityCalls++;
+    CheckRadarHud(str_contains($call->Parameters[1]->{'$type'}, 'EX_LocalVariable') && $call->Parameters[1]->Variable->New->Path === ['ZoneByte'], 'Each Hub query must take the current zone cursor.');
+});
 $refreshCode = json_encode($radarFunctions['SSRadarRefreshAvailability']->ScriptBytecode, JSON_THROW_ON_ERROR);
 CheckRadarHud($radarManifest['hubAvailability']['eligibleTypeMask'] === (OverlayTypeBit('hiddenCube') | OverlayTypeBit('matchbox'))
-    && substr_count($refreshCode, '"Value":"hiddenCube"') === 5 && substr_count($refreshCode, '"Value":"matchbox"') === 5 && !str_contains($refreshCode, '"Value":"seek5"'), 'Hub refresh must query each selected Hub-capable type once per zone.');
+    && substr_count($refreshCode, '"Value":"hiddenCube"') === 1 && substr_count($refreshCode, '"Value":"matchbox"') === 1 && !str_contains($refreshCode, '"Value":"seek5"')
+    && $availabilityCalls === 2 && $radarManifest['hubAvailability']['fullSweepRefreshCalls'] === 10 && $radarManifest['hubAvailability']['nativeCallLimitPerRefresh'] === 1,
+    'Hub refresh must query one Hub-capable type per call, cycling every type through every zone.');
 $values = static fn(string $name): array => array_map(static fn(object $v): int => $v->Value, $radarDefaults[$name]->Value);
 CheckRadarHud($values('SSRadarCountIds') === [101, 9001, 102, 9002] && $values('SSRadarCountSlots') === [OverlayCatalogSlot('hiddenCube'), OverlayCatalogSlot('hiddenCube'), OverlayCatalogSlot('matchbox'), OverlayCatalogSlot('matchbox')]
     && $values('SSRadarCountHub') === [0, 1, 0, 1], 'Zone counts must list each puzzle once (pairs share an ID), by zone and type, flagging Hub puzzles.');
@@ -101,4 +125,59 @@ $findArraySet = static function (mixed $value) use (&$findArraySet, &$arraySetCa
 $findArraySet($radarExports['SSRadarCountStep']->ScriptBytecode);
 CheckRadarHud($arraySetCalls === 2, 'Count step must increment both left and total.');
 CheckRadarHud(array_column($radarExports['SSRadarRequestCounts']->LoadedProperties, 'Name') === ['Zone'] && $radarManifest['counts']['request'] === 'SSRadarRequestCounts(Zone)', 'The map requests counts by zone.');
-echo "HUD radar embedding checks passed: native functions, lifecycle host, input transparency, placement, duplicate rejection, and the multi-type selection mask.\n";
+
+// Custom map markers: the local player's MapMarker location pings, drawn whatever types are selected.
+$importNamed = static function (string $name, string $class) use ($radar): ?object {
+    foreach ($radar->Imports as $import) { if ($import->ObjectName === $name && $import->ClassName === $class) { return $import; } }
+    return null;
+};
+$outerName = static fn(?object $import): ?string => $import === null ? null : $radar->Imports[-1 - $import->OuterIndex]->ObjectName;
+CheckRadarHud($outerName($importNamed('SophiaPlayerState', 'Class')) === '/Script/IslandsofInsight' && $outerName($importNamed('SocialSystemComponent', 'Class')) === '/Script/IslandsofInsight'
+    && $outerName($importNamed('LocationPingInfo', 'ScriptStruct')) === '/Script/IslandsofInsight' && $outerName($importNamed('Controller', 'Class')) === '/Script/Engine',
+    'Map markers need the native player state, social component, ping struct and controller.');
+CheckRadarHud($outerName($importNamed('MapMarker', 'Texture2D')) === '/Game/ASophia/UI/HUD/Markers/Textures/MapMarker', 'In-range markers must use the game\'s own map marker icon.');
+$exportIndex = static fn(string $name): int => array_search($radarExports[$name], $radar->Exports, true) + 1;
+for ($marker = 0; $marker < 8; $marker++) {
+    foreach (['SSRadarMarker', 'SSRadarMarkerArrow', 'SSRadarMarkerDistance'] as $prefix) {
+        $widget = $radarExports[$prefix . $marker] ?? null;
+        CheckRadarHud($widget !== null && isset($radarFields[$prefix . $marker]) && array_column($widget->Data, 'Value', 'Name')['Visibility'] === 'ESlateVisibility::Collapsed', "{$prefix}{$marker} must exist and start collapsed.");
+        CheckRadarHud($exportIndex($prefix . $marker) > $exportIndex('SSRadarHeight23'), 'Map markers must draw above puzzle pins.');
+    }
+}
+CheckRadarHud(!isset($radarExports['SSRadarMarker8']) && $radarManifest['mapMarkers']['slots'] === 8 && $radarManifest['mapMarkers']['runtimeVerified'] === true, 'The radar has eight marker slots.');
+$markerFunction = $radarExports['SSRadarRenderMarkers'];
+$markerLocals = array_column($markerFunction->LoadedProperties, null, 'Name');
+CheckRadarHud($radar->Imports[-1 - $markerLocals['Ping']->Struct]->ObjectName === 'LocationPingInfo' && $markerLocals['Ping']->ElementSize === 48
+    && $radar->Imports[-1 - $markerLocals['MarkerLoc']->Struct]->ObjectName === 'Vector', 'Marker locals must hold a LocationPingInfo and its Vector location.');
+CheckRadarHud($radar->Imports[-1 - $markerLocals['State']->PropertyClass]->ObjectName === 'SophiaPlayerState' && $radar->Imports[-1 - $markerLocals['Social']->PropertyClass]->ObjectName === 'SocialSystemComponent', 'Marker object locals must carry their native classes.');
+$markerCode = json_encode($markerFunction->ScriptBytecode, JSON_THROW_ON_ERROR);
+foreach (['PlayerState', 'PingSystemComponent', 'latestUpdatedLocationPings', 'PingType', 'Loc', 'SSRadarRadiusCm'] as $path) {
+    CheckRadarHud(str_contains($markerCode, '"Path":["' . $path . '"]'), "Marker rendering must read {$path}.");
+}
+$markerCalls = [];
+$eachCall($markerFunction->ScriptBytecode, static function (string $name, object $call) use (&$markerCalls, $radar): void {
+    $markerCalls[$name] = ($markerCalls[$name] ?? 0) + 1;
+    if ($name === 'EqualEqual_ByteByte') {
+        CheckRadarHud(str_contains($call->Parameters[0]->{'$type'}, 'EX_StructMemberContext') && $call->Parameters[0]->StructMemberExpression->New->Path === ['PingType']
+            && str_contains($call->Parameters[1]->{'$type'}, 'EX_ByteConst') && $call->Parameters[1]->Value === 0, 'Only ELocationPingType::MapMarker (0) pings are map markers.');
+    }
+    if ($name === 'Round') {
+        // Labels measure straight-line distance (height included), like the game's own marker.
+        CheckRadarHud($call->Parameters[0]->Parameters[0]->Variable->New->Path === ['LabelCm'], 'Marker distance labels must use the 3D LabelCm distance.');
+    }
+    if ($name === 'DegAtan2') {
+        // The arrow texture points up and Slate angles turn clockwise: angle = atan2(right, up).
+        $up = $call->Parameters[1];
+        CheckRadarHud($call->Parameters[0]->Variable->New->Path === ['UnitX'] && $radar->Imports[-1 - $up->StackNode]->ObjectName === 'Multiply_FloatFloat'
+            && $up->Parameters[0]->Variable->New->Path === ['UnitY'] && $up->Parameters[1]->Value === -1.0, 'The rim arrow angle must be DegAtan2(UnitX, -UnitY).');
+    }
+});
+CheckRadarHud(($markerCalls['EqualEqual_ByteByte'] ?? 0) === 8 && ($markerCalls['Array_Get'] ?? 0) === 8 && ($markerCalls['SetRenderTransformAngle'] ?? 0) === 8 && ($markerCalls['DegAtan2'] ?? 0) === 8,
+    'Every marker slot must filter by ping type and point its rim arrow.');
+$updateCode = $radarExports['SSRadarUpdate']->ScriptBytecode;
+$renderMarkers = $exportIndex('SSRadarRenderMarkers');
+CheckRadarHud(count(array_filter($updateCode, static fn(object $e): bool => ($e->StackNode ?? null) === $renderMarkers)) === 1, 'Every visible update must render the map markers once.');
+// The enabled/menu gate must not hide an empty selection: only the pin path branches on it.
+$selectionJumps = array_filter($updateCode, static fn(object $e): bool => str_contains($e->{'$type'}, 'EX_JumpIfNot') && str_contains(json_encode($e->BooleanExpression, JSON_THROW_ON_ERROR), '"SSRadarSelectedMask"'));
+CheckRadarHud(count($selectionJumps) === 1, 'An enabled radar must show with no puzzle type selected.');
+echo "HUD radar embedding checks passed: native functions, lifecycle host, input transparency, placement, duplicate rejection, the multi-type selection mask, and map markers.\n";
