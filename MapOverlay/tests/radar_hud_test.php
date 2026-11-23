@@ -83,6 +83,7 @@ CheckRadarHud($values('SSRadarCountIds') === [101, 9001, 102, 9002] && $values('
     && $values('SSRadarCountHub') === [0, 1, 0, 1], 'Zone counts must list each puzzle once (pairs share an ID), by zone and type, flagging Hub puzzles.');
 CheckRadarHud($values('SSRadarCountZoneStart') === [0, 0, 0, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4] && count($values('SSRadarCountLeft')) === 31, 'Count rows need per-zone ranges and catalog-indexed results.');
 $radarExports = array_column($radar->Exports, null, 'ObjectName');
+AssertNoContextCallArguments($radar, 'Radar widget');
 $countStep = array_search($radarExports['SSRadarCountStep'], $radar->Exports, true) + 1;
 CheckRadarHud($radarExports['SSRadarTick']->ScriptBytecode[0]->StackNode === $countStep, 'The radar tick must advance the bounded count pass.');
 $stepBytecode = json_encode($radarExports['SSRadarCountStep']->ScriptBytecode, JSON_THROW_ON_ERROR);
