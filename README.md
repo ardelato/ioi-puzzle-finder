@@ -60,7 +60,10 @@ shortcut keys.
 
 The radar shows the ticked types, each pin with its type's icon. The distance
 under the radar is its radius. Up and down carets mark puzzles more than
-10 metres above or below you. Settings last for the current session; a new
+10 metres above or below you. Your custom map markers always appear: within
+range at their position, farther away as a cyan arrow on the rim with their
+distance. While enabled, the radar stays up even when no puzzle type is
+ticked. Settings last for the current session; a new
 session starts with nothing ticked. The radar hides during menus and puzzle
 input. Fixed puzzle pins follow live progress and clear when the game records
 a solve.
@@ -68,8 +71,8 @@ a solve.
 Inside a Crystal Labyrinth, the radar shows the floor you are on: white lines
 for solid walls, blue lines for glass, red squares for gaps in the floor you can
 fall through, and **^** / **v** where a passage (in the Vault of the Vitric, a
-jump pad and the shaft above it) leads to the floor above or below. The radar zooms to fit the labyrinth and shows *Floor N
-of M* under the ring; it appears even with no puzzle types ticked, also for
+jump pad and the shaft above it) leads to the floor above or below. The radar
+zooms to fit the labyrinth and shows *Floor N of M* under the ring, also for
 labyrinths you have already solved, and returns to normal when you leave. Hub
 labyrinths and the seven in the Vault of the Vitric are drawn; the other
 handmade labyrinths are not yet.

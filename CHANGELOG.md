@@ -16,12 +16,18 @@
   displayed name.
 - Restyle the panel: solid backdrop, gold diamond checkboxes, switches, game-
   style buttons and range / size choices on the Radar tab.
+- Show your custom map markers on the radar whatever types are selected: the
+  map marker icon within range, otherwise a cyan rim arrow with the distance.
+  An enabled radar now stays on screen with no puzzle type ticked.
+- Stop inactive Hub puzzles flashing on the map after ticking a type: Hub
+  availability is now tracked for every Hub type in the background instead of
+  restarting on each selection change.
 - Show the current floor of a Hub Crystal Labyrinth on the radar: solid and
   glass walls, gaps in the floor, passages up and down, and *Floor N of M*.
-  The radar fits the labyrinth while you are inside, even with no puzzle types
-  ticked and for labyrinths already solved. The seven handmade labyrinths in
-  the Vault of the Vitric are drawn too, with jump pads as the passages up and
-  down; other handmade labyrinths are not yet.
+  The radar fits the labyrinth while you are inside, also for labyrinths
+  already solved. The seven handmade labyrinths in the Vault of the Vitric are
+  drawn too, with jump pads as the passages up and down; other handmade
+  labyrinths are not yet.
 
 ## 0.1.0-beta.1
 

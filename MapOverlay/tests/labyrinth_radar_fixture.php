@@ -186,7 +186,9 @@ function BuildLabyrinthRadarFixture(string $output, int $cells = 4, float $yaw =
         $radarCall('SSRadarSetSelection', [$i(0), $truth(false), $truth(true)]),
         ...$standAt($cells * 3, 0),
         $assert($math('Not_PreBool', $radarField('SSRadarMazeActive')), 'outside every maze: labyrinth layer inactive'),
-        $assert($math('EqualEqual_ByteByte', $canvas(), FilterExpr('ByteConst', ['Value' => 1])), 'no types and no maze: radar stays hidden'),
+        // An enabled radar stays on screen with no type ticked; the labyrinth layer is simply off.
+        $assert($math('EqualEqual_ByteByte', $canvas(), FilterExpr('ByteConst', ['Value' => 3])), 'no types and no maze: enabled radar stays up'),
+        $assert($intEq($radarField('SSRadarMazeWallsShown'), 0), 'no maze: no wall bars shown'),
         // Not started (absent from the worker list) but standing inside: outlines still show.
         ...$stand(1),
         $assert($radarField('SSRadarMazeActive'), 'inside a maze not in the worker list: layer active'),
@@ -225,7 +227,7 @@ function BuildLabyrinthRadarFixture(string $output, int $cells = 4, float $yaw =
         ...$standAt($cells * 3, 0),
         $assert($math('Not_PreBool', $radarField('SSRadarMazeActive')), 'leaving the maze deactivates the layer'),
         $assert($intEq($array('Array_Length', $radarField('SSRadarWallAX')), 0), 'leaving the maze clears walls'),
-        $assert($math('EqualEqual_ByteByte', $canvas(), FilterExpr('ByteConst', ['Value' => 1])), 'leaving the maze with no types hides the radar'),
+        $assert($intEq($radarField('SSRadarMazeWallsShown'), 0), 'leaving the maze hides every wall bar'),
         $assert($math('NearlyEqual_FloatFloat', $radarField('SSRadarViewRadiusCm'), $radarField('SSRadarRadiusCm'), $f(0.01)), 'leaving the maze restores the radar zoom'),
         // Baked handmade labyrinth: volume test, floor by height, walls and holes copied from the tables.
         ...$hm(20100, 20000, 1100),
