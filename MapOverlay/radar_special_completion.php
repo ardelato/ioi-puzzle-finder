@@ -113,12 +113,13 @@ function AddRadarSpecialCompletion(RadarWidgetBuilder $b, array $descriptors): a
         $let('PuzzleStatus', $b->method($l('Source'), 'GISProgression', 'GetPuzzleSolveStatus', [$l('Player'), $l('ParentId'), $str(''), $str('')], FilterPointer($fn, 'PuzzleStatus'))),
         $let('Progress', FilterExpr('StructMemberContext', ['StructMemberExpression' => FilterPointer($b->native['PuzzleSolveData'], 'serializedProgress'), 'StructExpression' => $l('PuzzleStatus')])),
         $call('SSRadarParseFoundProgress', [$l('Progress')]),
-        $array('Array_Add', $state('SSRadarCachedParentIds'), $l('ParentId')), $array('Array_Add', $state('SSRadarCachedParentOffsets'), $array('Array_Length', $state('SSRadarCachedParentFound'))),
+        $array('Array_Add', $state('SSRadarCachedParentIds'), $l('ParentId')),
+        $let('Length', $array('Array_Length', $state('SSRadarCachedParentFound'))), $array('Array_Add', $state('SSRadarCachedParentOffsets'), $l('Length')),
         $unless($state('SSRadarParsedFoundValid'), 'Invalid'),
-        $array('Array_Add', $state('SSRadarCachedParentCounts'), $array('Array_Length', $state('SSRadarParsedFound'))),
+        $let('Length', $array('Array_Length', $state('SSRadarParsedFound'))), $array('Array_Add', $state('SSRadarCachedParentCounts'), $l('Length')),
         $array('Array_Append', $state('SSRadarCachedParentFound'), $state('SSRadarParsedFound')), $jump('Done'),
         ['label' => 'Invalid'], $array('Array_Add', $state('SSRadarCachedParentCounts'), $i(-1)), ['label' => 'Done']];
-    $b->define('SSRadarCacheMonolith', ['Source' => 'Object', 'Player' => 'Object', 'ParentId' => 'Int'], ['PuzzleStatus' => 'Struct', 'Progress' => 'Str'], $cacheParent);
+    $b->define('SSRadarCacheMonolith', ['Source' => 'Object', 'Player' => 'Object', 'ParentId' => 'Int'], ['PuzzleStatus' => 'Struct', 'Progress' => 'Str', 'Length' => 'Int'], $cacheParent);
 
     $fn = $b->functions['SSRadarFillLoreCache'];
     $l = static fn(string $n): object => FilterVariable($fn, $n);
