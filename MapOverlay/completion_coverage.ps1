@@ -1,10 +1,18 @@
 function Assert-SpecialCompletionSnapshot($Snapshot) {
     $lore = @($Snapshot.markers.PSObject.Properties.Value | Where-Object ptype -CEQ 'loreFragment')
     $fragments = @($Snapshot.markers.PSObject.Properties.Value | Where-Object ptype -CEQ 'monolithFragment')
+    $saveKeys = @($Snapshot.markers.PSObject.Properties.Value | Where-Object { $null -ne $_.completion -and $_.completion.kind -ceq 'saveKey' })
     $coverage = $Snapshot.specialCompletionCoverage
-    if ($null -eq $coverage -or $coverage.lorePuzzles -ne $lore.Count -or
-        $coverage.monolithFragments -ne $fragments.Count -or $coverage.total -ne $lore.Count + $fragments.Count) {
+    if ($null -eq $coverage -or $coverage.lorePuzzles -ne $lore.Count -or $coverage.monolithFragments -ne $fragments.Count -or
+        $coverage.saveKeyPuzzles -ne $saveKeys.Count -or $coverage.total -ne $lore.Count + $fragments.Count + $saveKeys.Count) {
         throw 'Special completion coverage is absent or inconsistent.'
+    }
+    foreach ($marker in $saveKeys) {
+        $descriptor = $marker.completion
+        if ($marker.group -cne 'static' -or $marker.ptype -cnotin @('rosary','matchbox') -or [string]::IsNullOrWhiteSpace($descriptor.key) -or
+            $descriptor.key -cnotmatch '^[\x20-\x7E]+--[A-Za-z][A-Za-z0-9_]* /Game/\S+$') {
+            throw "Invalid save-key completion identity for $($marker.pid)."
+        }
     }
     foreach ($marker in @($lore) + @($fragments)) {
         $descriptor = $marker.completion
@@ -68,16 +76,18 @@ function Assert-SpecialCompletionPackage($Snapshot, $RenderPoints, $Index, $Rada
     }
     for ($position = 0; $position -lt $expected.Count; $position++) {
         $entry = @($Index.specialCompletions)[$position]
-        $lore = $entry.kind -ceq 'lore'
-        $kind = if ($lore) { 1 } else { 2 }
-        $key = if ($lore) { [string]$entry.key } else { '' }
-        $parent = if ($lore) { 0 } else { [long]$entry.parentPid }
-        $fragment = if ($lore) { -1 } else { [long]$entry.fragmentIndex }
+        switch -CaseSensitive ($entry.kind) {
+            'lore' { $kind = 1; $key = [string]$entry.key; $parent = 0; $fragment = -1 }
+            'monolith' { $kind = 2; $key = ''; $parent = [long]$entry.parentPid; $fragment = [long]$entry.fragmentIndex }
+            'saveKey' { $kind = 3; $key = [string]$entry.key; $parent = 0; $fragment = -1 }
+            default { throw "Unknown special completion kind at index $position." }
+        }
         if ([long]$arrays.SSRadarSpecialIds[$position] -ne [long]$entry.pid -or
             [int]$arrays.SSRadarSpecialKinds[$position] -ne $kind -or [string]$arrays.SSRadarSpecialKeys[$position] -cne $key -or
             [long]$arrays.SSRadarSpecialParentIds[$position] -ne $parent -or [int]$arrays.SSRadarSpecialFragmentIndices[$position] -ne $fragment) {
             throw "Native special completion metadata changed at index $position."
         }
     }
-    return @{ specialPuzzles = $expected.Count; lorePuzzles = @($Index.specialCompletions | Where-Object kind -CEQ 'lore').Count; monolithFragments = @($Index.specialCompletions | Where-Object kind -CEQ 'monolith').Count }
+    return @{ specialPuzzles = $expected.Count; lorePuzzles = @($Index.specialCompletions | Where-Object kind -CEQ 'lore').Count; monolithFragments = @($Index.specialCompletions | Where-Object kind -CEQ 'monolith').Count
+        saveKeyPuzzles = @($Index.specialCompletions | Where-Object kind -CEQ 'saveKey').Count }
 }

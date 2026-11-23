@@ -70,8 +70,9 @@ PHP);
     UniversalCheck(array_keys($document['markers']) === [1, 2, 9, 10, 21, 40] && array_keys($document['unlocated']) === [3], 'Universal must preserve all eligible IDs and Mysteries, without adding unrelated metadata families.');
     UniversalCheck($document['counts']['static']['remaining'] === 4 && $document['counts']['hub']['remaining'] === 3, 'Universal counts must cover the full eligibility lists.');
     UniversalCheck($document['markers'][21]['group'] === 'static' && $document['markers'][21]['label'] === 'Logic Grid #21 (Mystery)'
+        && $document['markers'][40]['completion']['kind'] === 'saveKey' && !isset($document['markers'][21]['completion'])
         && $document['mysteryCoverage'] === ['included' => [21, 40]],
-        'Universal must include Mysteries as labelled fixed-location puzzles.');
+        'Universal must include Mysteries, with save-key completion only for save-text Mysteries.');
     UniversalCheck(count($document['markers'][9]['locations']) === 2 && $document['markers'][9]['locations'][1]['role'] === 'box'
         && count($document['markers'][10]['locations']) === 6 && $document['markers'][10]['locations'][0]['role'] === 'pillar'
         && $document['markers'][10]['locations'][5]['role'] === 'object', 'Universal must preserve matchbox/Pentad geometry and roles.');
@@ -109,8 +110,8 @@ PHP);
             && $universal['counts']['hub'] === ['remaining' => 16203, 'located' => 9719, 'unlocated' => 6484, 'renderPoints' => 12579]
             && $universal['counts']['spawn']['sites'] === 3375, 'Actual universal eligibility/render counts changed.');
         UniversalCheck(isset($universal['markers'][5594], $universal['markers'][5595]), 'Universal must include puzzle 5594, which the solved snapshot fixture omits.');
-        UniversalCheck($universal['specialCompletionCoverage'] === ['lorePuzzles' => 98, 'monolithFragments' => 59, 'total' => 157],
-            'Universal must retain completion identities for every lore and monolith fragment.');
+        UniversalCheck($universal['specialCompletionCoverage'] === ['lorePuzzles' => 98, 'monolithFragments' => 59, 'saveKeyPuzzles' => 75, 'total' => 232],
+            'Universal must retain completion identities for every lore, monolith fragment and save-key puzzle.');
         UniversalCheck(!isset($universal['source']['saveName'], $universal['source']['saveSha256'], $universal['source']['savedAtUtc']), 'Actual universal export leaked personal save provenance.');
         if (isset($options['puzzle-database-json'])) {
             UniversalCheck($universal['pentadProgressCoverage']['verifiedPentads'] === 293 && $universal['pentadProgressCoverage']['verifiedRelics'] === 1465
