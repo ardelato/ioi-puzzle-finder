@@ -112,7 +112,8 @@ function BuildProductionPentadMetadataFixture(string $output, string $build, str
     $code[] = $b->call('KismetSystemLibrary', 'K2_ClearTimer', [$s('Radar'), FilterExpr('StringConst', ['Value' => 'SSRadarTick'])]);
     $code[] = $set('Map', $create($classes['Map'])); $code[] = $b->method($s('Map'), 'UserWidget', 'AddToViewport', [$i(10)]);
     $assert($math('EqualEqual_ObjectObject', $property($s('Map'), $classes['Map'], 'SSOverlayRadarState'), $s('Radar')), 'exact production map binds exact production radar');
-    $code[] = $put($s('Map'), $classes['Map'], 'SSOverlaySelectedTag', FilterExpr('NameConst', ['Value' => 'SaveStats.Type.seek5']));
+    $code[] = $call('Map', 'SSOverlayClearTypes');
+    $code[] = FilterExpr('LetBool', ['VariableExpression' => $property($s('Map'), $classes['Map'], 'SSOverlayType_seek5'), 'AssignmentExpression' => FilterExpr('True')]);
     $code[] = $set('PuzzleComponent', $property($s('Player'), $b->native['SophiaCharacter'], 'CharPuzzleComponent'));
     $workers = static fn(): object => $property($s('PuzzleComponent'), $b->native['CharPuzzleComponent'], 'workedOnPuzzles');
     $progressData = static fn(): object => $property($s('Progression'), $b->native['GISProgression'], 'PlayerProgression');

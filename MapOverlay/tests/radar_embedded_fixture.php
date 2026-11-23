@@ -103,7 +103,7 @@ function BuildRadarEmbeddedFixture(string $output, string $world, string $hudPat
             'Delegate' => RadarContext($control, FilterVariable($b->native['CheckBox'], 'OnCheckStateChanged', true), FilterPointer($b->native['CheckBox'], 'OnCheckStateChanged')), 'Parameters' => [$bool($checked)]])];
     };
     $embedded = [...$embedded, ...$checkbox('SSOverlayCheck_type_hiddenCube'), ...$checkbox('SSOverlayCheck_radar_enabled'),
-        $assert($math('EqualEqual_NameName', $get('SSRadarSelectedTag'), FilterExpr('NameConst', ['Value' => 'SaveStats.Type.hiddenCube'])), 'actual map delegate selected rendered radar type'),
+        $assert($math('EqualEqual_IntInt', $get('SSRadarSelectedMask'), FilterExpr('IntConst', ['Value' => OverlayTypeBit('hiddenCube')])), 'actual map delegate selected rendered radar type'),
         $assert($get('SSRadarEnabled'), 'actual map checkbox enabled rendered radar')];
     if ($probeDiscovery) {
         // Stop immediately before the map-to-visible-owner identity assertion.
@@ -174,7 +174,7 @@ function BuildRadarEmbeddedFixture(string $output, string $world, string $hudPat
             $assert($math('NotEqual_ObjectObject', $mapGet('SSOverlayRadarState'), $s('TimerRadar')), 'existing map still caches the previous valid radar before Refresh'),
             ...$checkbox('SSOverlayCheck_source_spawn'),
             $assert($math('EqualEqual_ObjectObject', $mapGet('SSOverlayRadarState'), $s('TimerRadar')), 'Refresh rebinds existing map to replacement viewport HUD'),
-            $assert($math('EqualEqual_NameName', $get('SSRadarSelectedTag'), FilterExpr('NameConst', ['Value' => 'SaveStats.Type.hiddenCube'])), 'rebind preserves selected type'),
+            $assert($math('EqualEqual_IntInt', $get('SSRadarSelectedMask'), FilterExpr('IntConst', ['Value' => OverlayTypeBit('hiddenCube')])), 'rebind preserves selected type'),
             $assert($get('SSRadarIncludeSites'), 'rebind preserves possible-sites option'), $assert($get('SSRadarEnabled'), 'rebind preserves enabled option'),
             FilterExpr('Let', ['Value' => FilterPointer($fn, 'Timer'), 'Variable' => FilterVariable($fn, 'Timer'), 'Expression' => $b->call('KismetSystemLibrary', 'K2_SetTimer', [FilterExpr('Self'), FilterExpr('StringConst', ['Value' => 'VerifyReplacement']), $float(0.5), $bool(false), $float(0), $float(0)])]),
             FilterExpr('Return', ['ReturnExpression' => FilterExpr('Nothing')]), ['label' => 'Fail'], $travel(false)];
@@ -220,7 +220,7 @@ function BuildRadarEmbeddedFixture(string $output, string $world, string $hudPat
             FilterVariable($cachedId, 'LabelText'), $b->call('KismetTextLibrary', 'Conv_StringToText', [FilterExpr('StringConst', ['Value' => $expected])])]);
         $b->define('VerifyRestart', [], ['Timer' => 'Struct'], [
             $b->method($s('TimerMap'), 'UserWidget', 'AddToViewport', [$int(10)]),
-            ...$checkbox('SSOverlayShowFilters'),
+            $click('SSOverlayTabPuzzles'),
             $b->method($s('TimerMap'), 'Widget', 'SetVisibility', [FilterExpr('ByteConst', ['Value' => 1])]),
             $virtual('SSRadarSetView', [$int(0), $int(2)]), $virtual('SSRadarToggleEnabled'),
             $assert($math('Not_PreBool', $get('SSRadarEnabled')), 'canonical shortcut toggle disables radar while cached map is collapsed'),
@@ -237,11 +237,11 @@ function BuildRadarEmbeddedFixture(string $output, string $world, string $hudPat
             $captureText('SSOverlayRadarRangeText'), $assert($textEquals('Radar range: 50 m'), 'range label automatically reflects canonical radius'),
             $captureText('SSOverlayRadarSizeText'), $assert($textEquals('Size: 150%'), 'size label automatically reflects canonical size'),
             $b->call('KismetSystemLibrary', 'ExecuteConsoleCommand', [FilterExpr('Self'), FilterExpr('StringConst', ['Value' => 'Shot SHOWUI']), $s('TimerController')]),
-            $click('SSOverlayButtonZoomOut'), $assert($math('EqualEqual_IntInt', $get('SSRadarZoomIndex'), $int(1)), 'real zoom-out button selects 100 m'),
-            $click('SSOverlayButtonZoomIn'), $assert($math('EqualEqual_IntInt', $get('SSRadarZoomIndex'), $int(0)), 'real zoom-in button selects 50 m'),
-            $click('SSOverlayButtonRadarSize'), $assert($math('EqualEqual_IntInt', $get('SSRadarSizeIndex'), $int(0)), 'real size button wraps 150 to 100 percent'),
+            $click('SSOverlayRadarRange1'), $assert($math('EqualEqual_IntInt', $get('SSRadarZoomIndex'), $int(1)), 'real 100 m range choice selects 100 m'),
+            $click('SSOverlayRadarRange0'), $assert($math('EqualEqual_IntInt', $get('SSRadarZoomIndex'), $int(0)), 'real 50 m range choice selects 50 m'),
+            $click('SSOverlayRadarSize0'), $assert($math('EqualEqual_IntInt', $get('SSRadarSizeIndex'), $int(0)), 'real 100 percent size choice selects 100 percent'),
             ...$checkbox('SSOverlayCheck_type_matchbox'),
-            $assert($math('EqualEqual_NameName', $get('SSRadarSelectedTag'), FilterExpr('NameConst', ['Value' => 'SaveStats.Type.matchbox'])), 'type change publishes the new selected type'),
+            $assert($math('EqualEqual_IntInt', $get('SSRadarSelectedMask'), FilterExpr('IntConst', ['Value' => OverlayTypeBit('hiddenCube') | OverlayTypeBit('matchbox')])), 'adding a type publishes the combined selection'),
             $assert($math('Not_PreBool', $get('SSRadarEnabled')), 'type change retains shortcut-disabled radar'),
             $assert($math('EqualEqual_IntInt', $get('SSRadarZoomIndex'), $int(0)), 'type change retains current radius'),
             $assert($math('EqualEqual_IntInt', $get('SSRadarSizeIndex'), $int(0)), 'type change retains current size'),

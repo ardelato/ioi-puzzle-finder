@@ -73,6 +73,7 @@ function BuildFilterRuntimeFixture(string $outputDirectory, string $widgetPath, 
     $getWidgets = OverlayImport($widget, 'GetAllWidgetsOfClass', $widgetLibrary, '/Script/CoreUObject', 'Function');
     $addToViewport = OverlayImport($widget, 'AddToViewport', $userWidgetClass, '/Script/CoreUObject', 'Function');
     $nameEqual = OverlayImport($widget, 'EqualEqual_NameName', $math, '/Script/CoreUObject', 'Function');
+    $intEqual = OverlayImport($widget, 'EqualEqual_IntInt', $math, '/Script/CoreUObject', 'Function');
     $objectEqual = OverlayImport($widget, 'EqualEqual_ObjectObject', $math, '/Script/CoreUObject', 'Function');
     $setChecked = OverlayImport($widget, 'SetIsChecked', $checkBoxClass, '/Script/CoreUObject', 'Function');
     $isChecked = OverlayImport($widget, 'IsChecked', $checkBoxClass, '/Script/CoreUObject', 'Function');
@@ -197,14 +198,14 @@ function BuildFilterRuntimeFixture(string $outputDirectory, string $widgetPath, 
     $invoke = static function (string $name, ?bool $argument = null) use (&$code, &$calls, $byName, $actualWidget, $getControl, $setChecked, $nullPointer, $checkboxSignature, $buttonSignature, $checkBoxClass, $buttonClass, $externalFunctions, $local): void {
         if (!$actualWidget) {
             $code[] = FilterCall($byName[$name], $argument === null ? [] : [FilterExpr($argument ? 'True' : 'False')], 'LocalFinalFunction');
-        } elseif (preg_match('/^SSOverlayChanged_(source|type|radar)_(.+)$/', $name, $match) || $name === 'SSOverlayTogglePanel') {
-            $control = $getControl($name === 'SSOverlayTogglePanel' ? 'SSOverlayShowFilters' : 'SSOverlayCheck_' . $match[1] . '_' . $match[2]);
+        } elseif (preg_match('/^SSOverlayChanged_(source|type|radar)_(.+)$/', $name, $match)) {
+            $control = $getControl('SSOverlayCheck_' . $match[1] . '_' . $match[2]);
             $value = FilterExpr($argument ? 'True' : 'False');
             $code[] = FilterContext($control, FilterCall($setChecked, [$value], 'FinalFunction'), $nullPointer);
             $delegate = FilterContext($control, FilterVariable($checkBoxClass, 'OnCheckStateChanged', true), FilterPointer($checkBoxClass, 'OnCheckStateChanged'));
             $code[] = FilterExpr('CallMulticastDelegate', ['StackNode' => $checkboxSignature, 'Delegate' => $delegate, 'Parameters' => [$value]]);
-        } elseif ($name === 'SSOverlayTypesNone') {
-            $control = $getControl('SSOverlayButtonNone');
+        } elseif ($name === 'SSOverlayTypesNone' || str_starts_with($name, 'SSOverlayShowTab')) {
+            $control = $getControl($name === 'SSOverlayTypesNone' ? 'SSOverlayButtonNone' : 'SSOverlayTab' . substr($name, strlen('SSOverlayShowTab')));
             $delegate = FilterContext($control, FilterVariable($buttonClass, 'OnClicked', true), FilterPointer($buttonClass, 'OnClicked'));
             $code[] = FilterExpr('CallMulticastDelegate', ['StackNode' => $buttonSignature, 'Delegate' => $delegate, 'Parameters' => []]);
         } else {
@@ -218,14 +219,13 @@ function BuildFilterRuntimeFixture(string $outputDirectory, string $widgetPath, 
     $invoke('SSOverlayRefresh');
     foreach (['Static' => false, 'Hub' => false, 'HubCube' => false, 'Spawn' => false, 'Control' => true] as $tag => $expected) { $check('Test.' . $tag, $expected); }
     $checkBox('SSOverlayCheck_type_hiddenCube', false);
-    $checkBox('SSOverlayShowFilters', false);
     if ($actualWidget) { $assertCondition(FilterCall($byteEqual, [FilterContext($getControl('SSOverlayPanel'), FilterCall($getVisibility, [], 'FinalFunction'), $nullPointer), FilterExpr('ByteConst', ['Value' => 1])])); }
     $invoke('SSOverlayChanged_type_hiddenCube', true);
     $check('Test.Static', true); $check('Test.HubCube', true); $check('Test.Hub', false); $check('Test.Spawn', false);
     $invoke('SSOverlayChanged_source_spawn', true);
     $check('Test.Spawn', true);
     if ($withRadarHud) {
-        $assertCondition(FilterCall($nameEqual, [$getShared('SSRadarSelectedTag'), FilterExpr('NameConst', ['Value' => 'SaveStats.Type.hiddenCube'])]));
+        $assertCondition(FilterCall($intEqual, [$getShared('SSRadarSelectedMask'), FilterExpr('IntConst', ['Value' => OverlayTypeBit('hiddenCube')])]));
         $assertCondition($getShared('SSRadarIncludeSites'));
         $invoke('SSOverlayChanged_radar_enabled', false);
         $assertCondition(FilterCall($boolEqual, [$getShared('SSRadarEnabled'), FilterExpr('False')]));
@@ -252,9 +252,9 @@ function BuildFilterRuntimeFixture(string $outputDirectory, string $widgetPath, 
     $checkBox('SSOverlayCheck_type_hiddenCube', false);
     foreach (['Static', 'Hub', 'HubCube', 'Spawn'] as $tag) { $check('Test.' . $tag, false); }
     if ($actualWidget) {
-        $invoke('SSOverlayTogglePanel', true);
+        $invoke('SSOverlayShowTabPuzzles');
         $assertCondition(FilterCall($byteEqual, [FilterContext($getControl('SSOverlayPanel'), FilterCall($getVisibility, [], 'FinalFunction'), $nullPointer), FilterExpr('ByteConst', ['Value' => 0])]));
-        $invoke('SSOverlayTogglePanel', false);
+        $invoke('SSOverlayShowTabLegend');
         $assertCondition(FilterCall($byteEqual, [FilterContext($getControl('SSOverlayPanel'), FilterCall($getVisibility, [], 'FinalFunction'), $nullPointer), FilterExpr('ByteConst', ['Value' => 1])]));
     }
     $check('Test.Control', true);
@@ -274,7 +274,7 @@ function BuildFilterRuntimeFixture(string $outputDirectory, string $widgetPath, 
             $checkBox('SSOverlayCheck_radar_enabled', false);
             $assertCondition(FilterCall($objectEqual, [$getControl('SSOverlayRadarState'), $local('TestRadar')]));
             $invoke('SSOverlayTypesNone');
-            $assertCondition(FilterCall($nameEqual, [$getShared('SSRadarSelectedTag'), FilterExpr('NameConst', ['Value' => 'None'])]));
+            $assertCondition(FilterCall($intEqual, [$getShared('SSRadarSelectedMask'), FilterExpr('IntConst', ['Value' => 0])]));
             foreach (['Static', 'Hub', 'HubCube', 'Spawn'] as $tag) { $check('Test.' . $tag, false); }
         }
     }
