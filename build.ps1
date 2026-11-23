@@ -10,7 +10,8 @@ param(
     [string]$UAssetGuiPath,
     [string]$UnrealPakPath,
     [string]$OutputDir,
-    [ValidateRange(0, 100000)][int]$Limit
+    [ValidateRange(0, 100000)][int]$Limit,
+    [switch]$SkipLabyrinthBake
 )
 # Forward named arguments; the implementation owns defaults for omitted options.
 & (Join-Path $PSScriptRoot 'MapOverlay/build.ps1') @PSBoundParameters

@@ -22,6 +22,12 @@
 - Stop inactive Hub puzzles flashing on the map after ticking a type: Hub
   availability is now tracked for every Hub type in the background instead of
   restarting on each selection change.
+- Show the current floor of a Hub Crystal Labyrinth on the radar: solid and
+  glass walls, gaps in the floor, passages up and down, and *Floor N of M*.
+  The radar fits the labyrinth while you are inside, also for labyrinths
+  already solved. The seven handmade labyrinths in the Vault of the Vitric are
+  drawn too, with jump pads as the passages up and down; other handmade
+  labyrinths are not yet.
 
 ## 0.1.0-beta.1
 

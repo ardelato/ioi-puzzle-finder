@@ -69,6 +69,16 @@ game progress at runtime. `-Limit` produces a developer smoke build and must sta
 zero for a beta package. Snapshot mode is for local investigations only; its
 player-specific output is not suitable for distribution.
 
+Handmade Crystal Labyrinth floors are baked from the game itself: on the first
+build (and whenever the game, the base mod or the bake code changes) the builder
+runs the game once, headless, with an isolated profile under the output
+directory, to read the labyrinth levels. Close the game before that build. Only
+the launch settings (`GameUserSettings.ini`, `Launch.sav`, `LocalPersistence.sav`)
+are copied into the isolated profile; the progress save and the installed files
+are not touched. The result is cached as `labyrinth-layouts.json` in the asset
+input directory and reused by later builds without launching the game. Pass
+`-SkipLabyrinthBake` to build without handmade labyrinth floors.
+
 The builder writes to a new output directory, verifies native serialization,
 original map/HUD functions, coverage and package entries, and produces
 `ZZ_IOIPuzzleRadar_P.pak` with local build evidence. It does not install files into

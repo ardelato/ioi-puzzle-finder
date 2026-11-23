@@ -10,7 +10,9 @@ param(
     [string]$UAssetGuiPath = 'UAssetGUI',
     [string]$UnrealPakPath = 'UnrealPak',
     [string]$OutputDir = "$(Split-Path $PSScriptRoot -Parent)\output",
-    [ValidateRange(0, 100000)][int]$Limit = 0
+    [ValidateRange(0, 100000)][int]$Limit = 0,
+    # Handmade labyrinth floors are baked by running the game headless once per game version.
+    [switch]$SkipLabyrinthBake
 )
 
 $ErrorActionPreference = 'Stop'
@@ -371,14 +373,56 @@ foreach ($originalFunction in @($widgetBaseline.Exports | Where-Object { $_.'$ty
     }
 }
 
+# Handmade Crystal Labyrinth floors. The bake runs the game headless (game must be closed) and is
+# cached in the asset input directory, keyed by the game executable, base mod and labyrinth level
+# package, so later builds reuse it without launching the game.
+$labyrinthLayouts = $null
+$labyrinthBake = [ordered]@{ source = 'skipped' }
+if (-not $SkipLabyrinthBake) {
+    $gameExe = Join-Path $GameDir 'IslandsofInsight\Binaries\Win64\IslandsofInsight-Win64-Shipping.exe'
+    $levelPak = Join-Path $GameDir 'IslandsofInsight\Content\Paks\pakchunk2073-WindowsNoEditor.pak'
+    foreach ($file in @($gameExe, $levelPak)) { if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Labyrinth bake input missing: $file (or pass -SkipLabyrinthBake)." } }
+    $levelPakItem = Get-Item -LiteralPath $levelPak
+    $keyText = @(
+        (Get-FileHash -LiteralPath $gameExe -Algorithm SHA256).Hash,
+        (Get-FileHash -LiteralPath $installedPak -Algorithm SHA256).Hash,
+        "$($levelPakItem.Length):$($levelPakItem.LastWriteTimeUtc.Ticks)",
+        (Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'labyrinth_bake.php') -Algorithm SHA256).Hash
+    ) -join '|'
+    $bakeKey = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($keyText)))
+    $cachedLayouts = Join-Path $AssetInputDir 'labyrinth-layouts.json'
+    $cachedKey = Join-Path $AssetInputDir 'labyrinth-layouts.key'
+    $labyrinthLayouts = Join-Path $runDir 'labyrinth-layouts.json'
+    if ((Test-Path -LiteralPath $cachedLayouts) -and (Test-Path -LiteralPath $cachedKey) -and ((Get-Content -Raw -LiteralPath $cachedKey).Trim() -ceq $bakeKey)) {
+        Copy-Item -LiteralPath $cachedLayouts -Destination $labyrinthLayouts
+        $labyrinthBake.source = 'cache'
+    } else {
+        Write-Output 'Baking handmade labyrinth layouts (runs the game headless once)...'
+        & (Join-Path $PSScriptRoot 'labyrinth_bake.ps1') -GameDir $GameDir -PhpPath $php -UAssetGuiPath $assetGui -UnrealPakPath $unrealPak `
+            -BaseWidgetJson $baselineWidgetJson -BaselineWorldJson $baselineJson -MarkersJson $markersPath `
+            -RunDir (Join-Path $runDir 'labyrinth-bake') -OutputJson $labyrinthLayouts | Out-Null
+        Copy-Item -LiteralPath $labyrinthLayouts -Destination $cachedLayouts -Force
+        Set-Content -LiteralPath $cachedKey -Value $bakeKey -Encoding ascii
+        $labyrinthBake.source = 'baked'
+    }
+    $layoutData = Get-Content -Raw -LiteralPath $labyrinthLayouts | ConvertFrom-Json -Depth 20
+    $labyrinthBake.key = $bakeKey
+    $labyrinthBake.layouts = $labyrinthLayouts
+    $labyrinthBake.labyrinths = @($layoutData.labyrinths).Count
+    $labyrinthBake.puzzleIds = @($layoutData.labyrinths | ForEach-Object pid)
+    $labyrinthBake.floors = (@($layoutData.labyrinths | ForEach-Object { @($_.floors).Count }) | Measure-Object -Sum).Sum
+}
+
 $radarJson = Join-Path $runDir 'WBP_SSOverlayRadar.json'
 $radarManifestPath = Join-Path $runDir 'radar.json'
 $stagedRadar = Join-Path $stagedRadarDir 'WBP_SSOverlayRadar.uasset'
 $radarRoundtripJson = Join-Path $runDir 'radar-roundtrip.json'
-Invoke-CheckedTool $php @(
+$radarArguments = @(
     (Join-Path $PSScriptRoot 'radar_widget.php'), '--base-widget', $baselineWidgetJson,
     '--radar-data', $radarDataPath, '--output', $radarJson, '--manifest', $radarManifestPath
 )
+if ($labyrinthLayouts) { $radarArguments += @('--labyrinths', $labyrinthLayouts) }
+Invoke-CheckedTool $php $radarArguments
 Invoke-CheckedTool $assetGui @('fromjson', $radarJson, $stagedRadar)
 Invoke-CheckedTool $assetGui @('tojson', $stagedRadar, $radarRoundtripJson, 'VER_UE4_27')
 $radarSource = Get-Content -Raw -LiteralPath $radarJson | ConvertFrom-Json -Depth 100
@@ -447,6 +491,7 @@ $manifest = [ordered]@{
     radarData = $radarDataPath
     radarManifest = $radarManifestPath
     radarRoundtripJson = $radarRoundtripJson
+    labyrinthBake = $labyrinthBake
     specialCompletionCoverage = $specialCoverage
     packagedSpecialCompletionCoverage = $packagedSpecialCoverage
     hudManifest = $hudManifestPath

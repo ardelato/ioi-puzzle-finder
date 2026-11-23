@@ -151,7 +151,8 @@ CheckRadarHud($radar->Imports[-1 - $markerLocals['Ping']->Struct]->ObjectName ==
     && $radar->Imports[-1 - $markerLocals['MarkerLoc']->Struct]->ObjectName === 'Vector', 'Marker locals must hold a LocationPingInfo and its Vector location.');
 CheckRadarHud($radar->Imports[-1 - $markerLocals['State']->PropertyClass]->ObjectName === 'SophiaPlayerState' && $radar->Imports[-1 - $markerLocals['Social']->PropertyClass]->ObjectName === 'SocialSystemComponent', 'Marker object locals must carry their native classes.');
 $markerCode = json_encode($markerFunction->ScriptBytecode, JSON_THROW_ON_ERROR);
-foreach (['PlayerState', 'PingSystemComponent', 'latestUpdatedLocationPings', 'PingType', 'Loc', 'SSRadarRadiusCm'] as $path) {
+// Markers scale with the displayed radius: the zoom radius, or the labyrinth fit inside a Crystal Labyrinth.
+foreach (['PlayerState', 'PingSystemComponent', 'latestUpdatedLocationPings', 'PingType', 'Loc', 'SSRadarViewRadiusCm'] as $path) {
     CheckRadarHud(str_contains($markerCode, '"Path":["' . $path . '"]'), "Marker rendering must read {$path}.");
 }
 $markerCalls = [];
