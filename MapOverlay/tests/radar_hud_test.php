@@ -78,4 +78,26 @@ CheckRadarHud(!isset($radarFields['SSRadarHubTypeTags']) && isset($radarFields['
 $refreshCode = json_encode($radarFunctions['SSRadarRefreshAvailability']->ScriptBytecode, JSON_THROW_ON_ERROR);
 CheckRadarHud($radarManifest['hubAvailability']['eligibleTypeMask'] === (OverlayTypeBit('hiddenCube') | OverlayTypeBit('matchbox'))
     && substr_count($refreshCode, '"Value":"hiddenCube"') === 5 && substr_count($refreshCode, '"Value":"matchbox"') === 5 && !str_contains($refreshCode, '"Value":"seek5"'), 'Hub refresh must query each selected Hub-capable type once per zone.');
+$values = static fn(string $name): array => array_map(static fn(object $v): int => $v->Value, $radarDefaults[$name]->Value);
+CheckRadarHud($values('SSRadarCountIds') === [101, 9001, 102, 9002] && $values('SSRadarCountSlots') === [OverlayCatalogSlot('hiddenCube'), OverlayCatalogSlot('hiddenCube'), OverlayCatalogSlot('matchbox'), OverlayCatalogSlot('matchbox')]
+    && $values('SSRadarCountHub') === [0, 1, 0, 1], 'Zone counts must list each puzzle once (pairs share an ID), by zone and type, flagging Hub puzzles.');
+CheckRadarHud($values('SSRadarCountZoneStart') === [0, 0, 0, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4] && count($values('SSRadarCountLeft')) === 31, 'Count rows need per-zone ranges and catalog-indexed results.');
+$radarExports = array_column($radar->Exports, null, 'ObjectName');
+$countStep = array_search($radarExports['SSRadarCountStep'], $radar->Exports, true) + 1;
+CheckRadarHud($radarExports['SSRadarTick']->ScriptBytecode[0]->StackNode === $countStep, 'The radar tick must advance the bounded count pass.');
+$stepBytecode = json_encode($radarExports['SSRadarCountStep']->ScriptBytecode, JSON_THROW_ON_ERROR);
+CheckRadarHud(str_contains($stepBytecode, '"Path":["SSRadarCountActive"]'), 'Count step must gate Hub puzzles on the active list.');
+$arraySetCalls = 0;
+$findArraySet = static function (mixed $value) use (&$findArraySet, &$arraySetCalls, $radar): void {
+    if (is_object($value)) {
+        if (isset($value->StackNode) && is_int($value->StackNode) && $value->StackNode < 0 && $radar->Imports[-1 - $value->StackNode]->ObjectName === 'Array_Set') {
+            $arraySetCalls++;
+            CheckRadarHud(str_contains($value->Parameters[2]->{'$type'}, 'EX_LocalVariable'), 'Array_Set must receive a plain local item; inline calls write the stale value in engine.');
+        }
+        foreach ((array)$value as $child) { $findArraySet($child); }
+    } elseif (is_array($value)) { foreach ($value as $child) { $findArraySet($child); } }
+};
+$findArraySet($radarExports['SSRadarCountStep']->ScriptBytecode);
+CheckRadarHud($arraySetCalls === 2, 'Count step must increment both left and total.');
+CheckRadarHud(array_column($radarExports['SSRadarRequestCounts']->LoadedProperties, 'Name') === ['Zone'] && $radarManifest['counts']['request'] === 'SSRadarRequestCounts(Zone)', 'The map requests counts by zone.');
 echo "HUD radar embedding checks passed: native functions, lifecycle host, input transparency, placement, duplicate rejection, and the multi-type selection mask.\n";

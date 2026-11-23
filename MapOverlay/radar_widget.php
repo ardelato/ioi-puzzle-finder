@@ -877,11 +877,104 @@ function BuildRadarWidget(object $base, array $index): array
         ['label' => 'Wait'], $set('SSRadarWait', $math('Subtract_FloatFloat', $state('SSRadarWait'), $p('DeltaSeconds'))), $unless($math('LessEqual_FloatFloat', $state('SSRadarWait'), $f(0)), 'Render'), $localCall('SSRadarStartScan'), $localCall('SSRadarScan'),
         ['label' => 'Render'], $localCall('SSRadarRender'), $jump('Done'), ['label' => 'Hidden'], $visible('SSRadarCanvas', 1), ['label' => 'Done']];
     $b->define('SSRadarUpdate', ['PlayerX' => 'Float', 'PlayerY' => 'Float', 'PlayerZ' => 'Float', 'HeadingYaw' => 'Float', 'MenuHidden' => 'Bool', 'DeltaSeconds' => 'Float'], ['CellX' => 'Int', 'CellY' => 'Int', 'Teleported' => 'Bool'], $update);
+    // Per-zone counts for the map: fixed puzzles plus Hub puzzles the game currently has active.
+    // Work runs only while the map keeps asking (SSRadarRequestCounts), in small per-tick slices.
+    $countRows = [];
+    foreach ($index['puzzleIds'] as $point => $pid) {
+        $zone = $index['zones'][$point] ?? 0;
+        if ($pid <= 0 || $zone <= 0 || $index['isSpawn'][$point] === 1 || ($index['countable'][$point] ?? 1) === 0) { continue; }
+        $key = $index['typeKeys'][$pointTypes[$point]];
+        $countRows[$zone . ':' . $key . ':' . $pid] = [$zone, OverlayCatalogSlot($key), $pid, $index['hubAvailabilityZones'][$point] > 0 ? 1 : 0];
+    }
+    usort($countRows, static fn(array $a, array $b): int => [$a[0], $a[1], $a[2]] <=> [$b[0], $b[1], $b[2]]);
+    $zoneStart = array_fill(0, 17, 0);
+    foreach ($countRows as [$zone]) { $zoneStart[$zone + 1]++; }
+    for ($z = 1; $z < 17; $z++) { $zoneStart[$z] += $zoneStart[$z - 1]; }
+    $b->arrayField('Int', 'SSRadarCountIds', array_column($countRows, 2));
+    $b->arrayField('Int', 'SSRadarCountSlots', array_column($countRows, 1));
+    $b->arrayField('Int', 'SSRadarCountHub', array_column($countRows, 3));
+    $b->arrayField('Int', 'SSRadarCountZoneStart', $zoneStart);
+    foreach (['SSRadarCountZeros', 'SSRadarCountLeft', 'SSRadarCountTotal', 'SSRadarCountWorkLeft', 'SSRadarCountWorkTotal'] as $n) { $b->arrayField('Int', $n, array_fill(0, 31, 0)); }
+    foreach (['SSRadarCountZone' => 0, 'SSRadarCountRevision' => 0, 'SSRadarCountRequestZone' => 0, 'SSRadarCountWanted' => 0, 'SSRadarCountPassZone' => 0, 'SSRadarCountCursor' => 0, 'SSRadarCountEnd' => 0] as $n => $v) { $b->scalar('Int', $n, $v); }
+    $b->scalar('Bool', 'SSRadarCountHubReady', 0);
+    $b->arrayField('Object', 'SSRadarCountActive', []);
+    $b->class->LoadedProperties[array_key_last($b->class->LoadedProperties)]->Inner->PropertyClass = $b->native['PuzzleData'];
+    $b->reserve('SSRadarRequestCounts');
+    $b->reserve('SSRadarCountStep');
+    $fn = $b->functions['SSRadarRequestCounts'];
+    $b->define('SSRadarRequestCounts', ['Zone' => 'Int'], [], [
+        // A pass left idle while the map was closed restarts with fresh Hub data.
+        $unless($math('LessEqual_IntInt', $state('SSRadarCountWanted'), $i(0)), 'Wanted'),
+        $set('SSRadarCountPassZone', $i(0)), ['label' => 'Wanted'],
+        $set('SSRadarCountWanted', $i(40)),
+        $unless($math('NotEqual_IntInt', FilterVariable($fn, 'Zone'), $state('SSRadarCountRequestZone')), 'Done'),
+        $set('SSRadarCountRequestZone', FilterVariable($fn, 'Zone')), $set('SSRadarCountPassZone', $i(0)), ['label' => 'Done'],
+    ]);
+    $fn = $b->functions['SSRadarCountStep'];
+    $c = static fn(string $n): object => FilterVariable($fn, $n);
+    $clet = static fn(string $n, object $v): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $c($n), 'Expression' => $v]);
+    $nativeField = static fn(object $object, string $owner, string $name): object => RadarContext($object, FilterVariable($b->native[$owner], $name, true), FilterPointer($b->native[$owner], $name));
+    // Array_Set reads its item through MostRecentPropertyAddress: pass a plain local, never an inline call.
+    $bump = static fn(string $field): array => [
+        $array('Array_Get', $state($field), $c('Slot'), $c('Value')),
+        $clet('Value', $math('Add_IntInt', $c('Value'), $i(1))),
+        $array('Array_Set', $state($field), $c('Slot'), $c('Value'), $bool(false))];
+    $start = [
+        $unless($math('BooleanAND', $math('Greater_IntInt', $state('SSRadarCountRequestZone'), $i(0)), $math('Less_IntInt', $state('SSRadarCountRequestZone'), $i(16))), 'Done'),
+        $set('SSRadarCountPassZone', $state('SSRadarCountRequestZone')),
+        $array('Array_Get', $state('SSRadarCountZoneStart'), $state('SSRadarCountPassZone'), $c('Value')), $set('SSRadarCountCursor', $c('Value')),
+        $array('Array_Get', $state('SSRadarCountZoneStart'), $math('Add_IntInt', $state('SSRadarCountPassZone'), $i(1)), $c('Value')), $set('SSRadarCountEnd', $c('Value')),
+        $set('SSRadarCountWorkLeft', $state('SSRadarCountZeros')), $set('SSRadarCountWorkTotal', $state('SSRadarCountZeros')),
+        $array('Array_Clear', $state('SSRadarCountActive')), $setBool('SSRadarCountHubReady', $bool(false)),
+        $clet('Source', $database()),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$c('Source')]), 'Done'),
+        $unless($nativeField($c('Source'), 'PuzzleDatabase', 'bInitialized'), 'Done'),
+        $unless($math('Greater_IntInt', $nativeField($c('Source'), 'PuzzleDatabase', 'groupLifespan'), $i(0)), 'Done'),
+        $setBool('SSRadarCountHubReady', $bool(true)),
+        $clet('ZoneByte', $math('Conv_IntToByte', $state('SSRadarCountPassZone')))];
+    foreach ($hubTypeKeys as $key) {
+        // Every Hub-capable type, selected or not: counts cover the whole zone.
+        array_push($start,
+            $clet('Part', $b->method($c('Source'), 'PuzzleDatabase', 'GetAllActiveSandboxPuzzleDataOfTypeInZone', [FilterExpr('StringConst', ['Value' => $key]), $c('ZoneByte'), $bool(true)], FilterPointer($fn, 'Part'))),
+            $unless($math('Not_PreBool', $array('Array_Contains', $c('Part'), FilterExpr('ObjectConst', ['Value' => 0]))), 'HubUnknown'),
+            $array('Array_Append', $state('SSRadarCountActive'), $c('Part')));
+    }
+    array_push($start, $jump('Done'), ['label' => 'HubUnknown'], $setBool('SSRadarCountHubReady', $bool(false)), $jump('Done'));
+    $b->define('SSRadarCountStep', [], ['Source' => 'Object', 'Part' => 'Array', 'Data' => 'Object', 'ZoneByte' => 'Byte', 'Id' => 'Int', 'Slot' => 'Int', 'Hub' => 'Int', 'Value' => 'Int', 'Visited' => 'Int'], [
+        $unless($math('Greater_IntInt', $state('SSRadarCountWanted'), $i(0)), 'Done'),
+        $set('SSRadarCountWanted', $math('Subtract_IntInt', $state('SSRadarCountWanted'), $i(1))),
+        $unless($math('EqualEqual_IntInt', $state('SSRadarCountPassZone'), $i(0)), 'Work'),
+        ...$start,
+        ['label' => 'Work'], $clet('Visited', $i(0)), ['label' => 'Loop'],
+        $unless($math('Less_IntInt', $state('SSRadarCountCursor'), $state('SSRadarCountEnd')), 'Publish'),
+        $unless($math('Less_IntInt', $c('Visited'), $i(96)), 'Done'),
+        $array('Array_Get', $state('SSRadarCountIds'), $state('SSRadarCountCursor'), $c('Id')),
+        $array('Array_Get', $state('SSRadarCountSlots'), $state('SSRadarCountCursor'), $c('Slot')),
+        $array('Array_Get', $state('SSRadarCountHub'), $state('SSRadarCountCursor'), $c('Hub')),
+        $set('SSRadarCountCursor', $math('Add_IntInt', $state('SSRadarCountCursor'), $i(1))), $clet('Visited', $math('Add_IntInt', $c('Visited'), $i(1))),
+        $unless($math('Greater_IntInt', $c('Hub'), $i(0)), 'Count'),
+        // Hub puzzles count only while the game has them active.
+        $unless($state('SSRadarCountHubReady'), 'Loop'),
+        $clet('Data', $b->call('SophiaGameplayStatics', 'GetPuzzleData', [FilterExpr('Self'), $c('Id')])),
+        $unless($array('Array_Contains', $state('SSRadarCountActive'), $c('Data')), 'Loop'),
+        ['label' => 'Count'], ...$bump('SSRadarCountWorkTotal'),
+        $unless($math('Not_PreBool', $localCall('SSRadarIsSolved', [$c('Id')])), 'Loop'),
+        ...$bump('SSRadarCountWorkLeft'), $jump('Loop'),
+        ['label' => 'Publish'],
+        $set('SSRadarCountLeft', $state('SSRadarCountWorkLeft')), $set('SSRadarCountTotal', $state('SSRadarCountWorkTotal')),
+        $set('SSRadarCountZone', $state('SSRadarCountPassZone')), $set('SSRadarCountRevision', $math('Add_IntInt', $state('SSRadarCountRevision'), $i(1))),
+        $set('SSRadarCountPassZone', $i(0)), ['label' => 'Done'],
+    ]);
+    foreach ($b->asset->Exports[$fn - 1]->LoadedProperties as $property) {
+        if ($property->Name === 'Source') { $property->PropertyClass = $b->native['PuzzleDatabase']; }
+        if ($property->Name === 'Data') { $property->PropertyClass = $b->native['PuzzleData']; }
+        if ($property->Name === 'Part') { $property->Inner = $b->field('Object', 'Part'); $property->Inner->PropertyClass = $b->native['PuzzleData']; }
+    }
     $fn = $b->functions['SSRadarTick'];
     $l = static fn(string $n): object => FilterVariable($fn, $n);
     $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $l($n), 'Expression' => $e]);
     $component = static fn(string $local, string $struct, string $member): object => FilterExpr('StructMemberContext', ['StructMemberExpression' => FilterPointer($b->native[$struct], $member), 'StructExpression' => $l($local)]);
-    $tick = [$let('Player', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['SophiaCharacter'], 'TargetExpression' => $b->call('GameplayStatics', 'GetPlayerCharacter', [FilterExpr('Self'), $i(0)])])),
+    $tick = [$localCall('SSRadarCountStep'), $let('Player', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['SophiaCharacter'], 'TargetExpression' => $b->call('GameplayStatics', 'GetPlayerCharacter', [FilterExpr('Self'), $i(0)])])),
         $unless($b->call('KismetSystemLibrary', 'IsValid', [$l('Player')]), 'Invalid'),
         $unless($math('NotEqual_ObjectObject', $l('Player'), $state('SSRadarProgressPlayer')), 'SamePlayer'),
         $setBool('SSRadarDirty', $bool(true)), $setBool('SSRadarScanActive', $bool(false)),
@@ -917,7 +1010,8 @@ function BuildRadarWidget(object $base, array $index): array
         'radiusCm' => 10000, 'radiusPresetsCm' => [5000, 10000, 20000, 40000], 'sizePresets' => [1, 1.25, 1.5], 'defaultSize' => 1.25,
         'shortcuts' => ['toggle' => 'F8', 'zoomIn' => 'F3', 'zoomOut' => 'F4', 'size' => 'F10'], 'heightDeadbandCm' => 1000, 'pinLimit' => 24, 'candidateBudget' => 128, 'updateIntervalSeconds' => 0.1,
         'candidateIntervalSeconds' => 0.5, 'displacementInvalidationCm' => 5000, 'indexedPoints' => count($index['positions']), 'gridWidth' => $index['width'], 'gridHeight' => $index['height'],
-        'functionNames' => array_keys($b->functions), 'selectionFunction' => 'SSRadarSetSelection', 'updateFunction' => 'SSRadarUpdate', 'initiallyHidden' => true,
+        'functionNames' => array_keys($b->functions), 'counts' => ['request' => 'SSRadarRequestCounts(Zone)', 'left' => 'SSRadarCountLeft', 'total' => 'SSRadarCountTotal', 'zone' => 'SSRadarCountZone', 'revision' => 'SSRadarCountRevision',
+            'indexedBy' => 'catalog position', 'rows' => count($countRows), 'perTickBudget' => 96, 'requestLifetimeTicks' => 40, 'hubRule' => 'Hub puzzles count only while GetAllActiveSandboxPuzzleDataOfTypeInZone lists them'], 'selectionFunction' => 'SSRadarSetSelection', 'updateFunction' => 'SSRadarUpdate', 'initiallyHidden' => true,
         'selectionField' => 'SSRadarSelectedMask', 'selectionMode' => 'multiple via SSRadarSelectedMask', 'selectionParameters' => ['SelectedMask' => 'Int', 'IncludeSites' => 'Bool', 'Enabled' => 'Bool'],
         'typeBits' => array_combine($index['typeKeys'], $typeBits), 'typeMask' => $radarMask, 'typeBitsField' => 'SSRadarTypeBits', 'pointTypesField' => 'SSRadarPointTypes',
         'scanOrder' => 'selected types in radar type order over one bounds computation; one commit after the last selected type',
