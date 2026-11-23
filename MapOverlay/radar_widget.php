@@ -38,7 +38,11 @@ function RadarCompile(array $parts): array
     $labels = [];
     $offset = 0;
     foreach ($parts as $part) {
-        if (is_array($part)) { $labels[$part['label']] = $offset; }
+        if (is_array($part)) {
+            // A repeated label would silently retarget every jump to its last definition.
+            if (isset($labels[$part['label']])) { throw new RuntimeException('Duplicate radar label ' . $part['label']); }
+            $labels[$part['label']] = $offset;
+        }
         else { $offset += RadarExprSize($part); }
     }
     $result = [];
