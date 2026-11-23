@@ -106,6 +106,24 @@ Check(count(array_unique(array_column($types, 'iconAsset'))) === 28, 'Icon asset
 foreach ($types as $type) {
     Check(preg_match('/^SSIcon[0-9]{3}$/', $type['iconAsset']) === 1, 'Icon assets must use fixed nine-character names.');
 }
+$mysteryMap = [
+    Entry(30, 'mystery', 'logicGrid', [$point]), Entry(21, 'mystery', 'logicGrid', [$point]),
+    (object)((array)Entry(40, 'mystery', 'rosary', [$point]) + ['saveName' => 'BP_MegaRosary_C--fixture']),
+    Entry(22, 'static', 'logicGrid', [$point]), Entry(23, 'internal', 'dungeon', [$point]),
+];
+Check(GetOverlayMysteryPids($mysteryMap) === [21, 30, 40], 'Every Mystery, and only Mysteries, must be included, sorted by ID.');
+$mysteryData = BuildOverlayData($mysteryMap, [30], [22, ...GetOverlayMysteryPids($mysteryMap)], []);
+Check(array_keys((array)$mysteryData['markers']) === [21, 22, 40], 'Solved Mysteries must be skipped like any other static puzzle.');
+Check($mysteryData['markers']->{21}['label'] === 'Logic Grid #21 (Mystery)' && $mysteryData['markers']->{21}['family'] === 'mystery'
+    && $mysteryData['markers']->{21}['group'] === 'static' && $mysteryData['markers']->{22}['label'] === 'Logic Grid #22',
+    'Mysteries must join the fixed-location group and be labelled; other puzzles keep their labels.');
+$near = (object)['x' => 100, 'y' => 100, 'z' => 0]; $far = (object)['x' => 9000, 'y' => 9000, 'z' => 0];
+$zoned = [Entry(50, 'static', 'logicGrid', [$near]), Entry(51, 'hub', 'logicGrid', [$far]), Entry(52, 'mystery', 'logicGrid', [$far])];
+$zoned[0]->zoneIndex = '4'; $zoned[1]->zoneIndex = '6'; $zoned[2]->zoneIndex = '7';
+$zonedMarkers = BuildOverlayData($zoned, [], [50, 52], [51])['markers'];
+Check($zonedMarkers->{52}['zoneIndex'] === 6 && $zonedMarkers->{52}['zoneInferredFrom'] === 51
+    && $zonedMarkers->{50}['zoneIndex'] === 4 && !isset($zonedMarkers->{50}['zoneInferredFrom']),
+    'Mysteries must take the zone of the nearest non-Mystery puzzle; other puzzles keep their own zone.');
 Check(count((array)BuildFixedMarkers([], [])) === 0, 'An empty marker set must remain an object.');
 try {
     BuildFixedMarkers([Entry(1, 'static', 'logicGrid', [$point]), Entry(1, 'static', 'logicGrid', [$point])], []);
@@ -163,7 +181,7 @@ try {
         Check(!isset($document['markers'][5594]), 'Solved puzzle 5594 was exported.');
         Check(isset($document['markers'][5595]), 'Explicitly unsolved puzzle 5595 was excluded.');
         Check($document['markers'][5595]['x'] === -32698.21, 'Export does not use the known course anchor coordinate.');
-        Check($document['counts']['static']['remaining'] === 2797 && $document['counts']['static']['located'] === 2797, 'Static export does not match SaveStats 1.3.1 fixed-family fixture total.');
+        Check($document['counts']['static']['remaining'] === 2818 && $document['counts']['static']['located'] === 2818, 'Static export does not match SaveStats 1.3.1 fixed-family fixture total plus 21 Mysteries.');
         Check($document['counts']['hub']['remaining'] === 16202 && $document['counts']['hub']['located'] === 9718 && $document['counts']['hub']['unlocated'] === 6484, 'Hub export must preserve all remaining profile IDs, including unlocated puzzles.');
         Check(count($document['unlocated']) === 6484 && $document['counts']['spawn']['sites'] > 0 && $document['counts']['spawn']['visibleByDefault'] === false, 'Real metadata must expose unlocated IDs and optional possible sites.');
         Check($document['source']['saveSha256'] === $fixtureBefore, 'Snapshot hash does not match input.');

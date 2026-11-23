@@ -22,6 +22,9 @@ function RadarSpecialDescriptors(array $records): array
                 throw new InvalidArgumentException('Monolith completion requires a parent puzzle and bounded zero-based fragment index.');
             }
             $result[$pid] = ['pid' => $pid, 'kind' => 2, 'key' => '', 'parentPid' => $parent, 'fragmentIndex' => $index];
+        } elseif (($record['kind'] ?? '') === 'saveKey') {
+            if (!IsSaveKey($record['key'] ?? null)) { throw new InvalidArgumentException('Save-key completion requires its saved text key.'); }
+            $result[$pid] = ['pid' => $pid, 'kind' => 3, 'key' => $record['key'], 'parentPid' => 0, 'fragmentIndex' => -1];
         } else { throw new InvalidArgumentException('Unknown special completion descriptor.'); }
     }
     ksort($result, SORT_NUMERIC);
@@ -151,7 +154,7 @@ function AddRadarSpecialCompletion(RadarWidgetBuilder $b, array $descriptors): a
         $let('Lore', $b->method($l('Source'), 'GISProgression', 'GetEarnedLore', [$l('Player')], FilterPointer($fn, 'Lore'))),
         $call('SSRadarFillLoreCache', [$l('Lore')]),
         ['label' => 'LoreReady'], $array('Array_Get', $state('SSRadarSpecialKeys'), $l('Descriptor'), $l('Key')), $ret($array('Array_Contains', $state('SSRadarEarnedLoreKeys'), $l('Key'))),
-        ['label' => 'Monolith'], $unless($math('EqualEqual_IntInt', $l('Kind'), $i(2)), 'Done'),
+        ['label' => 'Monolith'], $unless($math('EqualEqual_IntInt', $l('Kind'), $i(2)), 'SaveKey'),
         $array('Array_Get', $state('SSRadarSpecialParentIds'), $l('Descriptor'), $l('ParentId')), $array('Array_Get', $state('SSRadarSpecialFragmentIndices'), $l('Descriptor'), $l('FragmentIndex')),
         $let('CacheIndex', $array('Array_Find', $state('SSRadarCachedParentIds'), $l('ParentId'))),
         $unless($math('Less_IntInt', $l('CacheIndex'), $i(0)), 'ParentReady'),
@@ -161,12 +164,22 @@ function AddRadarSpecialCompletion(RadarWidgetBuilder $b, array $descriptors): a
         $array('Array_Get', $state('SSRadarCachedParentOffsets'), $l('CacheIndex'), $l('Offset')),
         $array('Array_Get', $state('SSRadarCachedParentFound'), $math('Add_IntInt', $l('Offset'), $l('FragmentIndex')), $l('Found')),
         $ret($math('EqualEqual_IntInt', $l('Found'), $i(1))), ['label' => 'Done']];
-    $b->define('SSRadarIsSpecialSolved', ['Descriptor' => 'Int', 'Source' => 'Object', 'Player' => 'Object'], ['Kind' => 'Int', 'Lore' => 'Map', 'Key' => 'Str', 'ParentId' => 'Int', 'FragmentIndex' => 'Int', 'CacheIndex' => 'Int', 'Count' => 'Int', 'Offset' => 'Int', 'Found' => 'Int'], $special, null, 'Bool');
+    // Kind 3: a saved text key, passed whole as GetPuzzleSolveStatus' hackID with KrakenID 0
+    // (verified in game). Store the returned struct in a local; member reads need an addressable struct.
+    $special = [...array_slice($special, 0, -1), // drop the trailing Done label; kind 3 continues below
+        ['label' => 'SaveKey'], $unless($math('EqualEqual_IntInt', $l('Kind'), $i(3)), 'Done'),
+        $array('Array_Get', $state('SSRadarSpecialKeys'), $l('Descriptor'), $l('Key')),
+        $set('SSRadarProgressQueriesTotal', $math('Add_IntInt', $state('SSRadarProgressQueriesTotal'), $i(1))),
+        $let('PuzzleStatus', $b->method($l('Source'), 'GISProgression', 'GetPuzzleSolveStatus', [$l('Player'), $i(0), $str(''), $l('Key')], FilterPointer($fn, 'PuzzleStatus'))),
+        $ret(FilterExpr('StructMemberContext', ['StructMemberExpression' => FilterPointer($b->native['PuzzleSolveData'], 'bSolved'), 'StructExpression' => $l('PuzzleStatus')])),
+        ['label' => 'Done']];
+    $b->define('SSRadarIsSpecialSolved', ['Descriptor' => 'Int', 'Source' => 'Object', 'Player' => 'Object'], ['Kind' => 'Int', 'Lore' => 'Map', 'Key' => 'Str', 'ParentId' => 'Int', 'FragmentIndex' => 'Int', 'CacheIndex' => 'Int', 'Count' => 'Int', 'Offset' => 'Int', 'Found' => 'Int', 'PuzzleStatus' => 'Struct'], $special, null, 'Bool');
     foreach ($b->asset->Exports[$fn - 1]->LoadedProperties as $property) {
         if ($property->Name === 'Keys') { $property->Inner = $b->field('Str', 'Keys'); }
         if ($property->Name === 'Lore') { $property->ElementSize = 80; $property->KeyProp = $b->field('Str', 'Lore'); $property->ValueProp = $b->field('Bool', 'Lore_Value'); }
     }
     return ['descriptors' => count($descriptors), 'lore' => count(array_filter($descriptors, static fn(array $d): bool => $d['kind'] === 1)),
-        'monolithFragments' => count(array_filter($descriptors, static fn(array $d): bool => $d['kind'] === 2)), 'minimumPid' => $descriptors[0]['pid'] ?? 0,
+        'monolithFragments' => count(array_filter($descriptors, static fn(array $d): bool => $d['kind'] === 2)),
+        'saveKeyPuzzles' => count(array_filter($descriptors, static fn(array $d): bool => $d['kind'] === 3)), 'minimumPid' => $descriptors[0]['pid'] ?? 0,
         'maximumPid' => $descriptors[array_key_last($descriptors)]['pid'] ?? 0, 'cache' => 'source,player,world-real-time frame', 'jsonInputLimit' => 2048, 'foundLimit' => 256];
 }

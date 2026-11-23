@@ -52,6 +52,8 @@ PHP);
         $entry(1, 'static', 'logicGrid', [$point]), $entry(9, 'static', 'matchbox', [$point, $point]),
         $entry(2, 'hub', 'hiddenCube', [$point]), $entry(3, 'hub', 'logicGrid', []),
         $entry(10, 'hub', 'seek5', array_fill(0, 6, $point)), $entry(99, 'cluster', 'hiddenCube', [$point]),
+        $entry(21, 'mystery', 'logicGrid', [$point]),
+        (object)((array)$entry(40, 'mystery', 'rosary', [$point]) + ['saveName' => 'BP_MegaRosary_C--tester--ABC--1--BP_MegaRosary_C /Game/Maps/T.T:PersistentLevel.BP_MegaRosary_C_3']),
     ], JSON_THROW_ON_ERROR));
     file_put_contents($provider . '/media/data/profileHub.json', '{"all":[2,3,10]}');
     file_put_contents($provider . '/media/data/spawns.csv', json_encode([
@@ -65,8 +67,12 @@ PHP);
     $bytes = file_get_contents($output);
     $document = json_decode($bytes, true, 512, JSON_THROW_ON_ERROR);
     UniversalCheck($document['source']['catalogMode'] === 'universal' && $document['schemaVersion'] === 2, 'Universal mode must retain schema 2 and identify its scope.');
-    UniversalCheck(array_keys($document['markers']) === [1, 2, 9, 10] && array_keys($document['unlocated']) === [3], 'Universal must preserve all eligible IDs, without adding unrelated metadata families.');
-    UniversalCheck($document['counts']['static']['remaining'] === 2 && $document['counts']['hub']['remaining'] === 3, 'Universal counts must cover the full eligibility lists.');
+    UniversalCheck(array_keys($document['markers']) === [1, 2, 9, 10, 21, 40] && array_keys($document['unlocated']) === [3], 'Universal must preserve all eligible IDs and Mysteries, without adding unrelated metadata families.');
+    UniversalCheck($document['counts']['static']['remaining'] === 4 && $document['counts']['hub']['remaining'] === 3, 'Universal counts must cover the full eligibility lists.');
+    UniversalCheck($document['markers'][21]['group'] === 'static' && $document['markers'][21]['label'] === 'Logic Grid #21 (Mystery)'
+        && $document['markers'][40]['completion']['kind'] === 'saveKey' && !isset($document['markers'][21]['completion'])
+        && $document['mysteryCoverage'] === ['included' => [21, 40]],
+        'Universal must include Mysteries, with save-key completion only for save-text Mysteries.');
     UniversalCheck(count($document['markers'][9]['locations']) === 2 && $document['markers'][9]['locations'][1]['role'] === 'box'
         && count($document['markers'][10]['locations']) === 6 && $document['markers'][10]['locations'][0]['role'] === 'pillar'
         && $document['markers'][10]['locations'][5]['role'] === 'object', 'Universal must preserve matchbox/Pentad geometry and roles.');
@@ -99,12 +105,13 @@ PHP);
         [$code, $stdout, $stderr] = UniversalRun($realArguments);
         UniversalCheck($code === 0 && $stderr === '', "Actual universal metadata export failed: $stdout $stderr");
         $universal = json_decode(file_get_contents($realOutput), true, 512, JSON_THROW_ON_ERROR);
-        UniversalCheck($universal['counts']['static'] === ['remaining' => 2797, 'located' => 2797, 'unlocated' => 0, 'renderPoints' => 3045]
+        UniversalCheck($universal['counts']['static'] === ['remaining' => 2818, 'located' => 2818, 'unlocated' => 0, 'renderPoints' => 3066]
+            && $universal['mysteryCoverage']['included'] === [1401, 1404, 3626, 14885, 14962, 16687, 19972, 20055, 20056, 20058, 20059, 20067, 20069, 20071, 20073, 21664, 21715, 40100, 40101, 40102, 40103]
             && $universal['counts']['hub'] === ['remaining' => 16203, 'located' => 9719, 'unlocated' => 6484, 'renderPoints' => 12579]
             && $universal['counts']['spawn']['sites'] === 3375, 'Actual universal eligibility/render counts changed.');
         UniversalCheck(isset($universal['markers'][5594], $universal['markers'][5595]), 'Universal must include puzzle 5594, which the solved snapshot fixture omits.');
-        UniversalCheck($universal['specialCompletionCoverage'] === ['lorePuzzles' => 98, 'monolithFragments' => 59, 'total' => 157],
-            'Universal must retain completion identities for every lore and monolith fragment.');
+        UniversalCheck($universal['specialCompletionCoverage'] === ['lorePuzzles' => 98, 'monolithFragments' => 59, 'saveKeyPuzzles' => 75, 'total' => 232],
+            'Universal must retain completion identities for every lore, monolith fragment and save-key puzzle.');
         UniversalCheck(!isset($universal['source']['saveName'], $universal['source']['saveSha256'], $universal['source']['savedAtUtc']), 'Actual universal export leaked personal save provenance.');
         if (isset($options['puzzle-database-json'])) {
             UniversalCheck($universal['pentadProgressCoverage']['verifiedPentads'] === 293 && $universal['pentadProgressCoverage']['verifiedRelics'] === 1465
@@ -116,6 +123,6 @@ PHP);
         [$code, $stdout, $stderr] = UniversalRun($realArguments);
         UniversalCheck($code === 0 && $stderr === '' && hash_file('sha256', $realOutput) === $firstHash,
             'Repeated actual universal exports must be deterministic.');
-        echo "Actual universal catalog integration passed (12,516 located puzzles; 18,999 total render points).\n";
+        echo "Actual universal catalog integration passed (12,537 located puzzles including 21 Mysteries; 19,020 total render points).\n";
     }
 } finally { UniversalRemoveFixture($directory); }

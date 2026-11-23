@@ -2,6 +2,16 @@
 
 declare(strict_types=1);
 
+/**
+ * File-based solves (Skydrops, Mystery matchboxes) are saved as text keys shaped like
+ * "<type>--<author>--<id>--<time>--<Class> <ObjectPath>". GISProgression.GetPuzzleSolveStatus
+ * accepts the full key as its hackID (verified in game).
+ */
+function IsSaveKey(mixed $key): bool
+{
+    return is_string($key) && strlen($key) <= 512 && preg_match('~^[\x20-\x7E]+--[A-Za-z][A-Za-z0-9_]* /Game/[\x21-\x7E]+$~', $key) === 1;
+}
+
 /** Validate catalog identity, independently of any player completion state. */
 function ValidateOverlayCompletion(mixed $raw, int $pid, string $ptype, string $group): array
 {
@@ -20,6 +30,9 @@ function ValidateOverlayCompletion(mixed $raw, int $pid, string $ptype, string $
         && $pid >= 42200 && $pid < 42700 && ($pid - 42000) % 100 === $raw['fragmentIndex']) {
         return ['kind' => 'monolith', 'parentPid' => $raw['parentPid'], 'fragmentIndex' => $raw['fragmentIndex']];
     }
+    if (($raw['kind'] ?? null) === 'saveKey' && in_array($ptype, ['rosary', 'matchbox'], true) && $keys === ['key', 'kind'] && IsSaveKey($raw['key'])) {
+        return ['kind' => 'saveKey', 'key' => $raw['key']];
+    }
     throw new InvalidArgumentException('Invalid special completion descriptor for puzzle ' . $pid . '.');
 }
 
@@ -28,9 +41,18 @@ function EnrichOverlayCompletionMetadata(array $overlay, array $puzzleMap): arra
 {
     $metadata = [];
     foreach ($puzzleMap as $entry) { $metadata[(int)$entry->pid] = $entry; }
-    $coverage = ['lorePuzzles' => 0, 'monolithFragments' => 0, 'total' => 0];
+    $coverage = ['lorePuzzles' => 0, 'monolithFragments' => 0, 'saveKeyPuzzles' => 0, 'total' => 0];
     $markers = (array)$overlay['markers'];
     foreach ($markers as $pid => &$marker) {
+        // Skydrops and Mystery matchboxes solved via a save-text key have no native puzzle status by ID.
+        $saveName = $metadata[$pid]->saveName ?? null;
+        if (in_array($marker['ptype'] ?? '', ['rosary', 'matchbox'], true) && is_string($saveName)
+            && in_array($metadata[$pid]->family ?? null, ['static', 'mystery'], true)) {
+            $marker['completion'] = ValidateOverlayCompletion(['kind' => 'saveKey', 'key' => $saveName], $marker['pid'], $marker['ptype'], $marker['group']);
+            $coverage['saveKeyPuzzles']++;
+            $coverage['total']++;
+            continue;
+        }
         if (!in_array($marker['ptype'] ?? '', ['loreFragment', 'monolithFragment'], true)) { continue; }
         $entry = $metadata[$pid] ?? null;
         if ($entry === null || ($entry->ptype ?? null) !== $marker['ptype'] || ($entry->family ?? null) !== 'static') {
