@@ -17,7 +17,7 @@ function Expect-ReleaseFailure([scriptblock]$Operation, [string]$Message) {
 try {
     $version = (Get-Content -Raw -LiteralPath (Join-Path $repo 'VERSION')).Trim()
     $compatibility = Get-Content -Raw -LiteralPath (Join-Path $repo 'compatibility.json') | ConvertFrom-Json
-    $pak = Join-Path $build 'ZZ_SaveStatsMap_P.pak'
+    $pak = Join-Path $build 'ZZ_IOIPuzzleRadar_P.pak'
     [IO.File]::WriteAllText($pak, 'Synthetic packaging fixture. This is not a game package.')
     $inputHash = (Get-FileHash -LiteralPath $pak -Algorithm SHA256).Hash
     $manifest = [ordered]@{
@@ -52,7 +52,7 @@ try {
     & $packager -BuildDirectory $build -OutputDir $output | Out-Null
     $zip = Join-Path $output "ioi-puzzle-radar-$version.zip"
     Assert-ReleaseTest (Test-Path -LiteralPath $zip -PathType Leaf) 'No release archive was written.'
-    $expected = @('ZZ_SaveStatsMap_P.pak','README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','CHANGELOG.md','BETA-TESTING.md','release.json','SHA256SUMS.txt')
+    $expected = @('ZZ_IOIPuzzleRadar_P.pak','README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','CHANGELOG.md','BETA-TESTING.md','release.json','SHA256SUMS.txt')
     $archive = [IO.Compression.ZipFile]::OpenRead($zip)
     try {
         Assert-ReleaseTest (@(Compare-Object ($expected | Sort-Object) (@($archive.Entries.FullName) | Sort-Object)).Count -eq 0) 'Public archive contains unexpected or missing files.'
@@ -60,6 +60,7 @@ try {
         $reader = [IO.StreamReader]::new($entry.Open())
         try { $releaseText = $reader.ReadToEnd() } finally { $reader.Dispose() }
         $release = $releaseText | ConvertFrom-Json -Depth 20
+        Assert-ReleaseTest ($release.package -ceq 'ZZ_IOIPuzzleRadar_P.pak') 'Release manifest package name is wrong.'
         Assert-ReleaseTest ($release.packageSha256 -ceq $inputHash) 'Release manifest package hash is wrong.'
         Assert-ReleaseTest (-not $releaseText.Contains($fixture)) 'Local paths leaked into release metadata.'
         Assert-ReleaseTest ($release.catalogMode -ceq 'universal' -and $release.version -ceq $version) 'Release identity disagrees with source.'

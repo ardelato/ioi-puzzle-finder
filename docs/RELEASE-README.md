@@ -1,4 +1,4 @@
-# Islands of Insight Puzzle Radar — 0.1.0-beta.1
+# Islands of Insight Puzzle Radar
 
 Adds puzzle-type map filters and a nearby-puzzle radar. Requires Islands of
 Insight on Windows and the full **Offline Restored Mod v1.6**, installed from
@@ -10,13 +10,14 @@ SaveStats and build tools are not needed to play.
 1. Close the game. In Steam, choose **Islands of Insight → Manage → Browse local
    files**.
 2. Extract this archive to a temporary folder.
-3. If replacing an older addon, keep its package outside the game's `Paks`
-   folder first.
-4. Copy only `ZZ_SaveStatsMap_P.pak` from the extracted files into the game's
+3. Move any previous Puzzle Radar package outside the game's `Paks` folder.
+   Beta 1 used `ZZ_SaveStatsMap_P.pak`. Keep just one Puzzle Radar package
+   installed when upgrading.
+4. Copy only `ZZ_IOIPuzzleRadar_P.pak` from the extracted files into the game's
    `IslandsofInsight/Content/Paks` folder. Its final location should be:
 
    ```text
-   IslandsofInsight/Content/Paks/ZZ_SaveStatsMap_P.pak
+   IslandsofInsight/Content/Paks/ZZ_IOIPuzzleRadar_P.pak
    ```
 
    Keep the existing filename so this addon loads after the base mod. The
@@ -25,7 +26,7 @@ SaveStats and build tools are not needed to play.
    lower-left corner and select one puzzle type.
 
 Keep all Offline Restored Mod files installed. To uninstall this addon, close
-the game and remove only `ZZ_SaveStatsMap_P.pak`.
+the game and remove `ZZ_IOIPuzzleRadar_P.pak` from the game folder.
 
 ## Use
 

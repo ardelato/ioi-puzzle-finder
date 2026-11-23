@@ -416,7 +416,7 @@ $responseLines = foreach ($assetFile in @(Get-ChildItem -LiteralPath $stagedCont
     '"' + $assetFile.FullName + '" "../../../IslandsofInsight/Content/' + $mountPath + '"'
 }
 [System.IO.File]::WriteAllLines($responsePath, $responseLines, [System.Text.UTF8Encoding]::new($false))
-$pakPath = Join-Path $runDir 'ZZ_SaveStatsMap_P.pak'
+$pakPath = Join-Path $runDir 'ZZ_IOIPuzzleRadar_P.pak'
 Invoke-CheckedTool $unrealPak @($pakPath, "-Create=$responsePath")
 Invoke-CheckedTool $unrealPak @($pakPath, '-Test')
 Invoke-CheckedTool $unrealPak @($pakPath, '-List')

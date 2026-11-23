@@ -1,7 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.2 (unreleased)
 
+- Rename the addon package to `ZZ_IOIPuzzleRadar_P.pak`. Move the beta 1 package
+  out of the game's `Paks` folder before installing the renamed package.
 - Move puzzle filters into the map legend as **Legend / Puzzles / Radar** tabs,
   replacing the lower-left panel and its separate toggle. The map no longer
   reacts to the cursor while it is over the panel.
@@ -17,7 +19,7 @@
 
 ## 0.1.0-beta.1
 
-Initial beta preparation. Public release is pending.
+First private beta.
 
 - Add world-map filters with puzzle icons and hover labels; select one puzzle
   type at a time.

@@ -15,7 +15,8 @@ if ($build.version -cne $version -or $build.catalogMode -cne 'universal' -or $bu
     throw 'A full, version-matched universal build with all 68 assets is required.'
 }
 if ($build.installedBasePakSha256 -ine $compatibility.offlineRestoredPakSha256) { throw 'Build uses an unsupported base mod.' }
-$pak = Join-Path $BuildDirectory 'ZZ_SaveStatsMap_P.pak'
+$pakName = 'ZZ_IOIPuzzleRadar_P.pak'
+$pak = Join-Path $BuildDirectory $pakName
 if ([IO.Path]::GetFullPath($build.pak) -ine $pak) { throw 'Build manifest package path disagrees with the build directory.' }
 $pakSha = (Get-FileHash -LiteralPath $pak -Algorithm SHA256).Hash
 if ($build.pakSha256 -cne $pakSha) { throw 'Package hash no longer matches the verified build manifest.' }
@@ -37,7 +38,7 @@ foreach ($source in $documents.Values) {
     if (-not (Test-Path -LiteralPath (Join-Path $repo $source) -PathType Leaf)) { throw "Missing release document: $source" }
 }
 New-Item -ItemType Directory -Path $folder -Force | Out-Null
-Copy-Item -LiteralPath $pak -Destination (Join-Path $folder 'ZZ_SaveStatsMap_P.pak')
+Copy-Item -LiteralPath $pak -Destination (Join-Path $folder $pakName)
 foreach ($document in $documents.GetEnumerator()) {
     Copy-Item -LiteralPath (Join-Path $repo $document.Value) -Destination (Join-Path $folder $document.Key)
 }
@@ -45,7 +46,7 @@ $release = [ordered]@{
     name = 'ioi-puzzle-radar'
     version = $version
     channel = 'beta'
-    package = 'ZZ_SaveStatsMap_P.pak'
+    package = $pakName
     packageSha256 = $pakSha
     catalogMode = 'universal'
     runtimeDependencies = [ordered]@{
@@ -69,7 +70,7 @@ $checksums = @(Get-ChildItem -LiteralPath $folder -File | Sort-Object Name | For
     ((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) + '  ' + $_.Name
 })
 [IO.File]::WriteAllLines((Join-Path $folder 'SHA256SUMS.txt'), $checksums, [Text.UTF8Encoding]::new($false))
-$allowed = @('ZZ_SaveStatsMap_P.pak', 'release.json', 'SHA256SUMS.txt') + @($documents.Keys)
+$allowed = @($pakName, 'release.json', 'SHA256SUMS.txt') + @($documents.Keys)
 $actual = @(Get-ChildItem -LiteralPath $folder -File | Select-Object -ExpandProperty Name)
 if (@(Compare-Object ($allowed | Sort-Object) ($actual | Sort-Object)).Count -ne 0) { throw 'Release allowlist mismatch.' }
 # Reject local paths or save provenance in every public text file.
