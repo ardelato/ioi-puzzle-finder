@@ -32,21 +32,34 @@ the same map or gameplay HUD assets can conflict with this addon.
 
    Keep the package's existing filename so it loads after the base mod. The
    archive's README, notices and checksums can stay in the temporary folder.
-5. Start the game, open the map, then open **Puzzle filters** in the lower-left
-   corner and select one puzzle type.
+5. Start the game, open the map, then open the **Puzzles** tab in the map
+   legend (lower right) and select one or more puzzle types.
 
 The addon does not replace the Offline Restored Mod's package, DLL or config.
 To uninstall, close the game and remove only `ZZ_SaveStatsMap_P.pak`.
 
 ## Map and radar
 
-Only one puzzle type is selected at a time. Select another row to switch types,
-or clear the selection to remove the addon pins. Type icons identify puzzles;
-hovering map markers shows their labels and IDs.
+The map legend in the lower right has three tabs: **Legend** (the game's own),
+**Puzzles** and **Radar**.
 
-**Show radar** displays the selected type in the lower-left gameplay HUD after
-closing the map. It hides during menus and puzzle input. Settings last for the
-current game session; a new session starts without a selected puzzle type.
+**Puzzles** follows the zone selected on the map. Its header shows the zone and
+how many puzzles are left there. The list shows only puzzle types found in that
+zone; tick any number of them to show their pins (nothing is ticked at first),
+type in the search box to narrow the list, and use **Clear** to untick them all.
+Each row shows *solved / total* for the zone, or *done* when nothing is left.
+Counts cover puzzles with a known location in the addon's catalog: fixed puzzles
+plus the Hub puzzles the game currently has active. They fill in over a few
+seconds after opening the map or changing zone. **Hide completed** removes
+finished types from the list (ticked types stay so they can be unticked). Map
+pins are limited to the selected zone. Hovering map markers shows their labels
+and IDs.
+
+**Radar** holds **Show gameplay radar**, the range and size choices, and the
+shortcut keys. The gameplay radar shows the ticked types in the lower-left HUD
+after closing the map, each pin with its type's icon. It hides during menus and
+puzzle input. Settings last for the current game session; a new session starts
+with nothing ticked.
 
 | Shortcut | Action |
 | --- | --- |
@@ -65,8 +78,9 @@ pairs share one ID. Selecting **Hidden Pentad** shows unsolved pillars; activati
 a Pentad focuses the radar on that puzzle's uncollected relics. Relics disappear
 as you collect them. Fixed Hub puzzles also follow the game's current selection.
 
-**Include possible spawn sites** is optional and off by default. Select a puzzle
-type first, then enable it to see eligible locations for that type. These cyan
+**Show possible sites** is optional and off by default. With it on, the list
+also includes types that only have possible sites in the zone, and ticked types
+show their eligible locations. These cyan
 pins are potential sites, not confirmation that a puzzle is currently there.
 
 ## Beta limits

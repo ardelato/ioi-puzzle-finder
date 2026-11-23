@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Move puzzle filters into the map legend as **Legend / Puzzles / Radar** tabs,
+  replacing the lower-left panel and its separate toggle. The map no longer
+  reacts to the cursor while it is over the panel.
+- Select any number of puzzle types; none are selected by default. The radar
+  shows every selected type with per-type pin icons.
+- Follow the map's selected zone: list only the types found there, show
+  *solved / total* per type (fixed plus currently active Hub puzzles), and
+  query map pins for that zone only.
+- Add a search box and a **Hide completed** switch; list types by their
+  displayed name.
+- Restyle the panel: solid backdrop, gold diamond checkboxes, switches, game-
+  style buttons and range / size choices on the Radar tab.
+
 ## 0.1.0-beta.1
 
 Initial beta preparation. Public release is pending.
