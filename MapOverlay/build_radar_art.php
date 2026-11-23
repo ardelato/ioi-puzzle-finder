@@ -41,6 +41,33 @@ function DrawRadarArt(string $asset): GdImage
             128 * $scale, 174 * $scale, 47 * $scale, 214 * $scale], $cyan);
         imagesetthickness($large, 3 * $scale);
         imageline($large, 128 * $scale, 42 * $scale, 128 * $scale, 164 * $scale, $highlight);
+    } elseif (in_array($asset, ['SSButtonN', 'SSButtonH', 'SSButtonP'], true)) {
+        $fill = match ($asset) { 'SSButtonN' => $color(12, 24, 30, 20), 'SSButtonH' => $color(28, 46, 54, 12), default => $color(70, 58, 30, 10) };
+        imagefilledrectangle($large, 6 * $scale, 6 * $scale, 250 * $scale - 1, 250 * $scale - 1, $fill);
+        imagesetthickness($large, 8 * $scale);
+        imagerectangle($large, 6 * $scale, 6 * $scale, 250 * $scale - 1, 250 * $scale - 1, $color(220, 181, 99, $asset === 'SSButtonN' ? 40 : 0));
+    } elseif ($asset === 'SSToggle0' || $asset === 'SSToggle1') {
+        $on = $asset === 'SSToggle1';
+        $s = static fn(float $v): int => (int)round($v * $scale);
+        // Horizontal units are halved: the widget stretches the texture to twice its height.
+        $track = $on ? $color(120, 96, 48, 10) : $color(12, 24, 30, 15);
+        $edge = $color(220, 181, 99, $on ? 0 : 50);
+        imagefilledellipse($large, $s(64), $s(128), $s(120), $s(232), $edge);
+        imagefilledellipse($large, $s(192), $s(128), $s(120), $s(232), $edge);
+        imagefilledrectangle($large, $s(64), $s(12), $s(192), $s(244), $edge);
+        imagefilledellipse($large, $s(64), $s(128), $s(104), $s(208), $track);
+        imagefilledellipse($large, $s(192), $s(128), $s(104), $s(208), $track);
+        imagefilledrectangle($large, $s(64), $s(24), $s(192), $s(232), $track);
+        imagefilledellipse($large, $s($on ? 186 : 70), $s(128), $s(84), $s(168), $on ? $color(240, 215, 154, 0) : $color(150, 160, 160, 0));
+    } elseif ($asset === 'SSCheckNo' || $asset === 'SSCheckOn') {
+        // Map filter checkboxes in the game's gold-diamond style.
+        $gold = $color(220, 181, 99, 0);
+        $fill = $color(9, 24, 30, 30);
+        $diamond = static fn(int $r): array => [128 * $scale, (128 - $r) * $scale, (128 + $r) * $scale, 128 * $scale, 128 * $scale, (128 + $r) * $scale, (128 - $r) * $scale, 128 * $scale];
+        imagefilledpolygon($large, $diamond(104), $fill);
+        imagesetthickness($large, 14 * $scale);
+        imagepolygon($large, $diamond(100), $gold);
+        if ($asset === 'SSCheckOn') { imagefilledpolygon($large, $diamond(58), $gold); }
     } else {
         throw new InvalidArgumentException('Unknown radar artwork: ' . $asset);
     }
@@ -64,7 +91,7 @@ function BuildRadarArtMain(array $argv): int
     require_once __DIR__ . '/../lib/icon_texture.php';
     $template = $options['template'];
     $manifest = [];
-    foreach (['SSRadRing', 'SSRadHead'] as $asset) {
+    foreach (['SSRadRing', 'SSRadHead', 'SSCheckNo', 'SSCheckOn', 'SSButtonN', 'SSButtonH', 'SSButtonP', 'SSToggle0', 'SSToggle1'] as $asset) {
         $pngPath = $output . DIRECTORY_SEPARATOR . $asset . '.png';
         $image = DrawRadarArt($asset);
         try { if (!imagepng($image, $pngPath)) { throw new RuntimeException('Cannot write radar artwork.'); } }
@@ -77,7 +104,7 @@ function BuildRadarArtMain(array $argv): int
     if (file_put_contents($output . DIRECTORY_SEPARATOR . 'radar-art.json', $json) !== strlen($json)) {
         throw new RuntimeException('Cannot write radar artwork manifest.');
     }
-    echo "Packed two radar HUD textures.\n";
+    echo "Packed nine radar and map HUD textures.\n";
     return 0;
 }
 

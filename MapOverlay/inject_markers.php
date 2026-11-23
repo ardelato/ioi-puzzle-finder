@@ -95,6 +95,10 @@ function ExpandOverlayMarkers(object $document, ?int $limit = null): array
                 || ($hubAvailabilityZone > 0 && (($record->group ?? '') !== 'hub' || ($record->zoneIndex ?? null) !== $hubAvailabilityZone))) {
                 throw new RuntimeException('Hub availability requires a matching exact Hub zone or zero.');
             }
+            $zone = $record->zoneIndex ?? null;
+            // SaveStats uses -1 (or omits the field) for an unknown zone.
+            if ($zone !== null && (!is_int($zone) || $zone > 15)) { throw new RuntimeException("Marker {$key} has an invalid zone index."); }
+            if ($zone !== null && $zone < 1) { $zone = null; }
             ValidateOverlayCoordinates($record, "marker {$key}");
             $geometry = $site ? 'point' : ($record->geometry ?? null);
             if (!in_array($geometry, ['point', 'pair', 'star', 'route'], true) || !is_array($record->locations ?? null) || empty($record->locations)) {
@@ -136,8 +140,11 @@ function ExpandOverlayMarkers(object $document, ?int $limit = null): array
                         $site ? [] : ['SaveStats.Puzzle.' . $record->pid],
                         $hubAvailabilityZone > 0 ? ['SaveStats.HubZone.' . $hubAvailabilityZone] : [],
                         !$site && $record->ptype === 'seek5' && $point->role === 'object' && $point->index >= 1 && $point->index <= 5 ? ['SaveStats.PentadRelic', 'SaveStats.PentadRelic.' . $point->index] : [],
-                        array_map(fn(string $type): string => 'SaveStats.Type.' . $type, $site ? array_values(array_unique($record->allowedTypes)) : [$record->ptype])
+                        array_map(fn(string $type): string => 'SaveStats.Type.' . $type, $site ? array_values(array_unique($record->allowedTypes)) : [$record->ptype]),
+                        // The map queries one type in the selected zone, not every zone's pins.
+                        $zone === null ? [] : array_map(fn(string $type): string => 'SaveStats.TypeZone.' . $type . '.' . $zone, $site ? array_values(array_unique($record->allowedTypes)) : [$record->ptype])
                     ),
+                    'zoneIndex' => $zone ?? 0,
                 ];
                 if ($site) {
                     $renderPoint->siteId = $record->siteId;

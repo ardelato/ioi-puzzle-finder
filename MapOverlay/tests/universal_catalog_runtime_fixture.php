@@ -108,7 +108,9 @@ function BuildUniversalCatalogRuntimeFixture(string $output, string $build, stri
         $expected = static fn() => $math('BooleanOR', $math('EqualEqual_IntInt', $s('UniversalStage'), $i(2)),
             $math('BooleanAND', $math('EqualEqual_IntInt', $s('UniversalStage'), $i(1)), $truth($point['pid'] % 2 === 0)));
         $stage[] = $set('ProofType', $str($point['ptype']));
-        $stage[] = $put($s('Map'), $classes['Map'], 'SSOverlaySelectedTag', $name('SaveStats.Type.' . $point['ptype']));
+        // Select exactly this control's type on the multi-select map.
+        $stage[] = $call('Map', 'SSOverlayClearTypes');
+        $stage[] = FilterExpr('LetBool', ['VariableExpression' => $property($s('Map'), $classes['Map'], 'SSOverlayType_' . $point['ptype']), 'AssignmentExpression' => FilterExpr('True')]);
         $stage[] = $call('Map', 'SSOverlayRefresh');
         $stage[] = $assert(FilterCall($b->functions['CheckControl'], [$i($point['pid']), $i(0), $i($point['radarIndex']), $str($point['actorName']), $f($point['x']), $f($point['y']), $f($point['z'])], 'LocalFinalFunction'),
             'omitted personal ID ' . $point['pid'] . ' obeys actual map/radar/native completion in every stage');

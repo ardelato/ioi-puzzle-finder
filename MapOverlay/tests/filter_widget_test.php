@@ -62,10 +62,35 @@ try {
     CheckFilter($code === 0 && $stderr === '', "Valid filter CLI failed: $stdout $stderr");
     $generated = json_decode(file_get_contents($output), false, 512, JSON_THROW_ON_ERROR);
     $details = json_decode(file_get_contents($manifest), false, 512, JSON_THROW_ON_ERROR);
-    CheckFilter(count($details->functionNames) === 48 && count($details->checkboxNames) === 30, 'Filter manifest lost functions or controls.');
+    CheckFilter(count($details->functionNames) === 57 && count($details->checkboxNames) === 30, 'Filter manifest lost functions or controls.');
     CheckFilter($details->liveProgressFunction === 'SSOverlayRefreshProgress' && $details->liveProgressBudget === 64 && $details->liveProgressIntervalSeconds === 0.25, 'Live map progress must use bounded selected-type checks.');
     CheckFilter($details->initializationFunction === 'OnInitialized' && in_array('OnInitialized', $details->functionNames, true), 'Fresh widgets must reconcile marker visibility with their displayed defaults.');
-    CheckFilter($details->selectionMode === 'single-or-none' && $details->buttonNames === ['SSOverlayButtonNone', 'SSOverlayButtonZoomOut', 'SSOverlayButtonZoomIn', 'SSOverlayButtonRadarSize'] && !in_array('SSOverlayTypesAll', $details->functionNames, true), 'Selector must provide single-type selection, clearing and radar view controls.');
+    CheckFilter($details->selectionMode === 'any-or-none' && $details->selectionMask === 'SSRadarSelectedMask' && $details->buttonNames === ['SSOverlayButtonNone', 'SSOverlayRadarRange0', 'SSOverlayRadarRange1', 'SSOverlayRadarRange2', 'SSOverlayRadarRange3', 'SSOverlayRadarSize0', 'SSOverlayRadarSize1', 'SSOverlayRadarSize2'] && !in_array('SSOverlayTypesAll', $details->functionNames, true), 'Selector must provide multi-type selection, clearing and radar view controls.');
+    AssertNoContextCallArguments($generated, 'Map widget');
+    $exports = array_column($generated->Exports, null, 'ObjectName');
+    foreach ($details->typeBits as $type => $bit) {
+        CheckFilter($bit === OverlayTypeBit($type), 'Map selection bits must match the shared catalog order.');
+        $handler = json_encode($exports['SSOverlayChanged_type_' . $type]->ScriptBytecode, JSON_THROW_ON_ERROR);
+        CheckFilter(!str_contains($handler, '"StackNode":' . (array_search($exports['SSOverlayClearTypes'], $generated->Exports, true) + 1) . ','), 'Selecting a type must not clear the other selected types.');
+    }
+    $zoneIndex = array_search($exports['SSOverlayRefreshZone'], $generated->Exports, true) + 1;
+    foreach (['Tick', 'OnInitialized'] as $caller) {
+        CheckFilter(str_contains(json_encode($exports[$caller]->ScriptBytecode, JSON_THROW_ON_ERROR), '"StackNode":' . $zoneIndex . ','), $caller . ' must follow the map selected zone.');
+    }
+    $zoneBytecode = json_encode($exports['SSOverlayRefreshZone']->ScriptBytecode, JSON_THROW_ON_ERROR);
+    CheckFilter(str_contains($zoneBytecode, '"Path":["NameEnum"]') && str_contains($zoneBytecode, '"Path":["Map"]'), 'Zone must come from the native map selection.');
+    CheckFilter($details->zoneTagPrefix === 'SaveStats.TypeZone.' && str_contains(json_encode($exports['SSOverlayRefresh']->ScriptBytecode, JSON_THROW_ON_ERROR), '"Value":"SaveStats.TypeZone.matchbox."'), 'Map pins must be queried per selected zone.');
+    $countsIndex = array_search($exports['SSOverlayRefreshCounts'], $generated->Exports, true) + 1;
+    CheckFilter(str_contains(json_encode($exports['Tick']->ScriptBytecode, JSON_THROW_ON_ERROR), '"StackNode":' . $countsIndex . ','), 'Map Tick must refresh per-zone counts.');
+    $countsBytecode = json_encode($exports['SSOverlayRefreshCounts']->ScriptBytecode, JSON_THROW_ON_ERROR);
+    CheckFilter(str_contains($countsBytecode, '"VirtualFunctionName":"SSRadarRequestCounts"') && str_contains($countsBytecode, '"Path":["SSRadarCountLeft"]') && str_contains($countsBytecode, '"Path":["SSRadarCountTotal"]'), 'Counts must come from the radar per-zone pass.');
+    foreach ($details->typeKeys as $type) {
+        CheckFilter(isset($exports['SSOverlayCount_' . $type]) && str_contains($countsBytecode, '"Path":["SSOverlayCount_' . $type . '"]'), 'Every type row must show its zone count.');
+    }
+    $publish = json_encode($exports['SSOverlayPublishRadar']->ScriptBytecode, JSON_THROW_ON_ERROR);
+    CheckFilter(str_contains($publish, '"Value":' . OverlayTypeBit('matchbox') . '}') && str_contains($publish, 'RadarSelectedMask'), 'Radar must receive the combined type mask.');
+    $refresh = json_encode($exports['SSOverlayRefresh']->ScriptBytecode, JSON_THROW_ON_ERROR);
+    CheckFilter(substr_count($refresh, '"Value":"SaveStats.Type.') === count($details->typeKeys), 'Map refresh must query every selected type.');
     $exports = array_column($generated->Exports, null, 'ObjectName');
     CheckFilter($details->pentadRelicTag === 'SaveStats.PentadRelic' && $details->pentadVisibilityFunction === 'SSOverlayAllowsPentadActor'
         && $details->pentadFocusField === 'SSRadarFocusPuzzleId' && $details->pentadFocusRefreshFunction === 'SSRadarRefreshPentadFocus', 'Map must use the shared native-derived Pentad focus and explicit relic identity.');
@@ -93,7 +118,7 @@ try {
         CheckFilter($defaults['SSOverlayType_' . $type] === 0, 'Type must start unselected.');
         CheckFilter(isset($exports['SSOverlayCheck_type_' . $type . '_Icon']), 'Every type row must have an icon.');
     }
-    CheckFilter($defaults['SSOverlaySelectedTag'] === 'None' && $defaults['SSOverlayReset'] === 1, 'Fresh widget must clear old marker visibility.');
+    CheckFilter(!array_key_exists('SSOverlaySelectedTag', $defaults) && $defaults['SSOverlayReset'] === 1, 'Fresh widget must clear old marker visibility.');
     CheckFilter($defaults['SSOverlayRadarEnabled'] === 1 && $details->sharedSelectionOwner === '/Game/SaveStats/WBP_SSOverlayRadar', 'Radar must default enabled and own the shared per-world selection.');
     CheckFilter(isset($exports['SSOverlayCheck_radar_enabled'], $exports['SSOverlayChanged_radar_enabled']), 'Map must expose the gameplay radar switch.');
     CheckFilter($exports['OnInitialized']->ScriptBytecode[0]->StackNode === $details->radarSyncFunctionIndex
@@ -101,7 +126,8 @@ try {
     CheckFilter($defaults['SSOverlayRadarZoomIndex'] === 1 && $defaults['SSOverlayRadarSizeIndex'] === 1
         && $details->radarDefaultRangeMetres === 100 && $details->radarDefaultSizePercent === 125, 'Radar view defaults must be100m and125%.');
     CheckFilter($defaults['bHasScriptImplementedTick'] === 1 && isset($exports['Tick']) && $exports['Tick']->LoadedProperties[0]->ElementSize === 56, 'Cached maps must use the native Tick signature and enable scripted Tick to synchronize gameplay hotkeys.');
-    foreach (['SSOverlayRadarZoomIn', 'SSOverlayRadarZoomOut', 'SSOverlayRadarCycleSize'] as $handler) {
+    foreach (['SSOverlaySetRadarRange0', 'SSOverlaySetRadarRange1', 'SSOverlaySetRadarRange2', 'SSOverlaySetRadarRange3', 'SSOverlaySetRadarSize0', 'SSOverlaySetRadarSize1', 'SSOverlaySetRadarSize2'] as $handler) {
+        CheckFilter(str_contains(json_encode($exports[$handler]->ScriptBytecode, JSON_THROW_ON_ERROR), '"VirtualFunctionName":"SSRadarSetView"'), 'Radar choices must set the radar view directly.');
         foreach ($exports[$handler]->ScriptBytecode as $expression) { CheckFilter(($expression->StackNode ?? null) !== $details->refreshFunctionIndex, 'View-only buttons must not refresh all map marker actors.'); }
     }
     $imports = $generated->Imports;
@@ -126,12 +152,62 @@ try {
     $checkContextArguments($exports['OnInitialized']->ScriptBytecode);
     $checkContextArguments($exports['SSOverlayRefresh']->ScriptBytecode);
     $checkContextArguments($exports['SSOverlayPublishRadar']->ScriptBytecode);
-    $panelLayout = $exports['SSOverlayCanvasSlot']->Data[0]->Value;
-    CheckFilter(array_column($panelLayout[0]->Value, 'Value', 'Name') === ['Left' => 24, 'Top' => -130, 'Right' => 280, 'Bottom' => 430], 'Filter panel must use the compact lower-left placement.');
-    CheckFilter($panelLayout[1]->Value[0]->Value[0]->Value->X === 0 && $panelLayout[1]->Value[0]->Value[0]->Value->Y === 1, 'Filter panel must anchor to the lower-left edge.');
+    $catalogNames = array_map(static fn(string $key): string => GetOverlayTypes()[$key]['name'], $details->typeKeys);
+    $sortedNames = $catalogNames;
+    usort($sortedNames, 'strcasecmp');
+    CheckFilter($details->typeOrder === 'display name' && $catalogNames === $sortedNames, 'Puzzle rows must follow the on-screen names.');
+    $legendIndex = array_search($exports['Legend_Panel'], $generated->Exports, true) + 1;
+    $slotOf = static fn(object $widget): int => array_column($widget->Data, 'Value', 'Name')['Slot'];
+    foreach (['SSOverlayPanel', 'SSOverlayRadarPanel', 'SSOverlayTabs'] as $hosted) {
+        CheckFilter($generated->Exports[$slotOf($exports[$hosted]) - 1]->OuterIndex === $legendIndex, $hosted . ' must live inside the game legend box.');
+    }
+    CheckFilter($details->panelHost === 'Legend_Panel' && $details->tabNames === ['Legend', 'Puzzles', 'Radar'] && !isset($exports['SSOverlayShowFilters']) && !isset($exports['SSOverlayTogglePanel']), 'Map controls must be legend tabs, not a floating toggle.');
+    $legendRootSlot = $generated->Exports[$slotOf($exports['Legend_Panel']) - 1];
+    CheckFilter(array_column($legendRootSlot->Data, 'Value', 'Name')['ZOrder'] === 90 && $details->panelHostZOrder === 90, 'Legend tabs must sit above the quest tracker that overlaps them, below the fast-travel prompt.');
+    $tickBytecode = json_encode($exports['Tick']->ScriptBytecode, JSON_THROW_ON_ERROR);
+    foreach (['DisableInteraction', 'EnableInteraction', 'IsHovered'] as $method) {
+        $import = array_search($method, array_column($generated->Imports, 'ObjectName'), true);
+        CheckFilter($import !== false && str_contains($tickBytecode, '"StackNode":' . (-1 - $import) . ','), 'Hovering the legend box must pause the map cursor tracking underneath it.');
+    }
+    CheckFilter(str_contains($tickBytecode, '"Path":["WBP_SandboxExpanded"]'), 'The hover guard must not re-enable the map under the zone overview.');
+    CheckFilter(str_contains($tickBytecode, '"VirtualFunctionName":"SSRadarCountStep"'), 'The map must drive the count pass: the radar timer stops while the world is paused.');
+    $zoneRows = json_encode($exports['SSOverlayRefreshZone']->ScriptBytecode, JSON_THROW_ON_ERROR);
+    CheckFilter(isset($exports['SSOverlaySearch']) && str_contains($zoneRows, '"Path":["SSOverlaySearch"]') && str_contains($zoneRows, '"Value":"Matchbox"'), 'Rows must follow the search box.');
+    $lenImport = -1 - array_search('Len', array_column($generated->Imports, 'ObjectName'), true);
+    CheckFilter(substr_count($zoneRows, '"StackNode":' . $lenImport . ',') === count($details->typeKeys), 'An empty search must list every row (UE4 Contains is false for an empty string).');
+    CheckFilter(!str_contains(json_encode($exports['SSOverlayShowTabPuzzles']->ScriptBytecode, JSON_THROW_ON_ERROR), 'SetPosition'), 'Switching tabs must not resize the box.');
+    CheckFilter(str_contains($zoneRows, '"Path":["DisplayIndex"]') && str_contains($zoneRows, '"Path":["SSOverlayZoneLabel"]'), 'The zone title must come from the selected zone entry.');
+    CheckFilter(str_contains($zoneRows, '"Path":["SSOverlayView_hideDone"]') && isset($exports['SSOverlayCheck_view_hideDone']), 'Completed types must be hideable.');
+    $subtract = -1 - array_search('Subtract_IntInt', array_column($generated->Imports, 'ObjectName'), true);
+    CheckFilter(str_contains(json_encode($exports['SSOverlayRefreshCounts']->ScriptBytecode, JSON_THROW_ON_ERROR), '"StackNode":' . $subtract . ','), 'Counts must read solved / total like the game.');
+    $panelRight = array_column(array_column($generated->Exports[$slotOf($exports['SSOverlayPanel']) - 1]->Data, 'Value', 'Name')['LayoutData'][0]->Value, 'Value', 'Name')['Right'];
+    CheckFilter($panelRight > 0, 'Content must stay inside the legend panel so it keeps a gap from the screen edge.');
+    foreach (['SSOverlayCheck_radar_enabled', 'SSOverlayCheck_source_spawn'] as $switch) {
+        $switchStyle = array_column($exports[$switch]->Data, null, 'Name')['WidgetStyle'];
+        CheckFilter($switchStyle->Value[0]->Value[1]->Value === array_search('SSToggle0', array_column($generated->Imports, 'ObjectName'), true) * -1 - 1, $switch . ' must look like a switch.');
+    }
+    $checkStyle = array_column($exports['SSOverlayCheck_type_matchbox']->Data, null, 'Name')['WidgetStyle'] ?? null;
+    CheckFilter($checkStyle !== null && $checkStyle->StructType === 'CheckBoxStyle' && count($checkStyle->Value) === 6, 'Filter checkboxes must use the gold diamond style.');
+    $legendSlots = array_column($exports['Legend_Panel']->Data, 'Value', 'Name')['Slots'];
+    CheckFilter($generated->Exports[$legendSlots[0]->Value - 1]->ObjectName === 'SSOverlayBackdropSlot', 'The solid backdrop must draw beneath the game legend rows.');
+    CheckFilter(str_contains(json_encode($exports['SSOverlayRefreshCounts']->ScriptBytecode, JSON_THROW_ON_ERROR), '"Path":["SSOverlayZoneHeader"]'), 'The Puzzles tab must show the detected zone.');
+    $classProperties = array_column($exports['WBP_LargeMap_C']->LoadedProperties, 'Name');
+    CheckFilter(in_array('VerticalBox_100', $classProperties, true) && array_column($exports['VerticalBox_100']->Data, 'Value', 'Name')['bIsVariable'] === 1, 'Legend tab must be able to hide the game legend list.');
+    $bindings = [];
+    foreach ($exports['ComponentDelegateBinding_0']->Data[0]->Value as $binding) {
+        $values = array_column($binding->Value, 'Value', 'Name');
+        $bindings[$values['ComponentPropertyName']] = $values['FunctionNameToBind'];
+    }
+    foreach ($details->tabNames as $tab) {
+        CheckFilter(($bindings['SSOverlayTab' . $tab] ?? null) === 'SSOverlayShowTab' . $tab && in_array('SSOverlayShowTab' . $tab, $details->functionNames, true), 'Every legend tab must switch panels.');
+        CheckFilter($exports['SSOverlayShowTab' . $tab]->ScriptBytecode[0]->StackNode === $details->radarSyncFunctionIndex, 'Tabs must refresh radar options before showing them.');
+    }
     $panelProperties = array_column($exports['SSOverlayPanel']->Data, 'Value', 'Name');
-    $headerProperties = array_column($exports['SSOverlayShowFilters']->Data, 'Value', 'Name');
-    CheckFilter($panelProperties['Visibility'] === 'ESlateVisibility::Collapsed' && $headerProperties['CheckedState'] === 'ECheckBoxState::Unchecked', 'Filter panel must begin collapsed with the header unchecked.');
+    $radarProperties = array_column($exports['SSOverlayRadarPanel']->Data, 'Value', 'Name');
+    CheckFilter($panelProperties['Visibility'] === 'ESlateVisibility::Collapsed' && $radarProperties['Visibility'] === 'ESlateVisibility::Collapsed', 'The map must open on the game legend tab.');
+    $rowOwner = static fn(string $name): string => $generated->Exports[$generated->Exports[$slotOf($exports[$name]) - 1]->OuterIndex - 1]->ObjectName;
+    CheckFilter($rowOwner('SSOverlayCheck_radar_enabled_Row') === 'SSOverlayRadarPanel' && $rowOwner('SSOverlayRadarRangeText') === 'SSOverlayRadarPanel'
+        && $rowOwner('SSOverlayCheck_source_spawn_Row') === 'SSOverlayPuzzleLayout' && $rowOwner('SSOverlayButtonNone') === 'SSOverlayTypesHeader' && $rowOwner('SSOverlayScroll') === 'SSOverlayPuzzleLayout' && $rowOwner('SSOverlayCheck_type_matchbox') === 'SSOverlayList', 'Radar settings belong to the Radar tab, puzzle controls to the Puzzles tab.');
     $checkWheel = static function (object $widget): void {
         $exports = array_column($widget->Exports, null, 'ObjectName');
         $properties = array_column($exports['SSOverlayScroll']->Data, null, 'Name');

@@ -175,4 +175,8 @@ foreach ([RadarTestPoint('bad', INF, 0), RadarTestPoint('bad', 3e38, 0), RadarTe
     try { BuildRadarIndex([$bad], $catalog); throw new RuntimeException('Invalid radar point was accepted.'); }
     catch (InvalidArgumentException) { /* Expected validation failure. */ }
 }
+$zoned = BuildRadarIndex([RadarTestPoint('zone-a', 0, 0) + ['pid' => 501, 'zoneIndex' => 3], RadarTestPoint('zone-unknown', 100, 0) + ['pid' => 502]], $catalog);
+RadarCheck($zoned['zones'] === [3, 0], 'Radar points must carry their zone for per-zone counts; unknown stays zero.');
+try { BuildRadarIndex([RadarTestPoint('zone-bad', 0, 0) + ['zoneIndex' => 16]], $catalog); throw new RuntimeException('Out-of-range zone was accepted.'); }
+catch (InvalidArgumentException) {}
 echo "Radar spatial index, budget, range, site, nearest and projection checks passed.\n";

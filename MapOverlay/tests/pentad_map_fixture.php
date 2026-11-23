@@ -118,8 +118,9 @@ function BuildPentadMapFixture(string $output, string $mapPath, string $hudPath)
         $visible('A0', true, $context); $visible('B0', !$bSolved, $context);
         foreach (['A', 'B'] as $prefix) { foreach (range(1, 5) as $part) { $visible($prefix . $part, $active === $prefix && !($prefix === 'B' && $bSolved), $context); } }
     };
-    $select = static function (string $type) use (&$code, $put, $s, $classes, $call): void {
-        $code[] = $put($s('Map'), $classes['Map'], 'SSOverlaySelectedTag', FilterExpr('NameConst', ['Value' => 'SaveStats.Type.' . $type]));
+    $select = static function (string $type) use (&$code, $property, $s, $classes, $call): void {
+        $code[] = $call('Map', 'SSOverlayClearTypes');
+        $code[] = FilterExpr('LetBool', ['VariableExpression' => $property($s('Map'), $classes['Map'], 'SSOverlayType_' . $type), 'AssignmentExpression' => FilterExpr('True')]);
         $code[] = $call('Map', 'SSOverlayRefresh');
     };
     $select('seek5'); $expect(null, 'inactive overview');

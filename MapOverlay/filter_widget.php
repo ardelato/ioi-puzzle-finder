@@ -201,18 +201,24 @@ function FilterRadarLookupCode(int $owner, int $function, array $native): array
     ]);
 }
 
-function FilterRadarPublishCode(int $owner, int $function, array $native): array
+function FilterRadarPublishCode(int $owner, int $function, array $native, array $typeFilters): array
 {
     $local = static fn(string $name): object => FilterVariable($function, $name);
     $assign = static fn(string $name, string $state): object => FilterExpr('Let', ['Value' => FilterPointer($function, $name), 'Variable' => $local($name), 'Expression' => FilterVariable($owner, $state, true)]);
     return FilterCompileCode([
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Done', 'BooleanExpression' => FilterCall($native['IsValid'], [FilterVariable($owner, 'SSOverlayRadarState', true)])]),
-        $assign('RadarSelectedTag', 'SSOverlaySelectedTag'),
+        FilterExpr('Let', ['Value' => FilterPointer($function, 'RadarSelectedMask'), 'Variable' => $local('RadarSelectedMask'), 'Expression' => FilterExpr('IntConst', ['Value' => 0])]),
+        ...array_merge([], ...array_map(static fn(array $filter): array => [
+            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Bit_' . $filter['key'], 'BooleanExpression' => FilterVariable($owner, $filter['state'], true)]),
+            FilterExpr('Let', ['Value' => FilterPointer($function, 'RadarSelectedMask'), 'Variable' => $local('RadarSelectedMask'),
+                'Expression' => FilterCall($native['Or_IntInt'], [$local('RadarSelectedMask'), FilterExpr('IntConst', ['Value' => OverlayTypeBit($filter['key'])])])]),
+            ['label' => 'Bit_' . $filter['key']],
+        ], $typeFilters)),
         FilterExpr('LetBool', ['VariableExpression' => $local('RadarIncludeSites'), 'AssignmentExpression' => FilterVariable($owner, 'SSOverlaySource_spawn', true)]),
         FilterExpr('LetBool', ['VariableExpression' => $local('RadarEnabled'), 'AssignmentExpression' => FilterVariable($owner, 'SSOverlayRadarEnabled', true)]),
         $assign('RadarZoomIndex', 'SSOverlayRadarZoomIndex'), $assign('RadarSizeIndex', 'SSOverlayRadarSizeIndex'),
         FilterRadarMethod($owner, 'SSRadarSetView', [$local('RadarZoomIndex'), $local('RadarSizeIndex')]),
-        FilterRadarMethod($owner, 'SSRadarSetSelection', [$local('RadarSelectedTag'), $local('RadarIncludeSites'), $local('RadarEnabled')]),
+        FilterRadarMethod($owner, 'SSRadarSetSelection', [$local('RadarSelectedMask'), $local('RadarIncludeSites'), $local('RadarEnabled')]),
         ['label' => 'Done'], ...FilterReturn(),
     ]);
 }
@@ -254,7 +260,10 @@ function FilterRadarSyncCode(int $owner, int $function, array $native): array
     foreach (['Zoom' => [50, 100, 200, 400], 'Size' => [100, 125, 150]] as $kind => $values) {
         foreach ($values as $index => $value) {
             $next = $kind . 'Label' . ($index + 1);
+            $mark = $state('SSOverlayRadar' . ($kind === 'Zoom' ? 'Range' : 'Size') . $index . '_Mark');
+            $code[] = FilterContext($mark, FilterCall($native['SetVisibility'], [FilterExpr('ByteConst', ['Value' => 2])], 'FinalFunction'), FilterVoidPointer());
             $code[] = $unless(FilterCall($native['EqualEqual_IntInt'], [$state('SSOverlayRadar' . $kind . 'Index'), FilterExpr('IntConst', ['Value' => $index])]), $next);
+            $code[] = FilterContext(unserialize(serialize($mark)), FilterCall($native['SetVisibility'], [FilterExpr('ByteConst', ['Value' => 0])], 'FinalFunction'), FilterVoidPointer());
             $label = $kind === 'Zoom' ? 'Radar range: ' . $value . ' m' : 'Size: ' . $value . '%';
             $code[] = FilterContext($state($kind === 'Zoom' ? 'SSOverlayRadarRangeText' : 'SSOverlayRadarSizeText'),
                 FilterCall($native['SetText'], [FilterCall($native['Conv_StringToText'], [FilterExpr('StringConst', ['Value' => $label])])], 'FinalFunction'), FilterVoidPointer());
@@ -264,7 +273,7 @@ function FilterRadarSyncCode(int $owner, int $function, array $native): array
     return FilterCompileCode([...$code, ...FilterReturn()]);
 }
 
-function FilterRefreshCode(int $owner, int $function, array $native): array
+function FilterRefreshCode(int $owner, int $function, array $native, array $typeFilters): array
 {
     $local = static fn(string $name): object => FilterVariable($function, $name);
     $assign = static fn(string $name, object $value): object => FilterExpr('Let', [
@@ -312,9 +321,19 @@ function FilterRefreshCode(int $owner, int $function, array $native): array
         FilterExpr('LetBool', ['VariableExpression' => FilterVariable($owner, 'SSOverlayReset', true), 'AssignmentExpression' => FilterExpr('False')]),
         ['label' => 'HidePrevious'], ...$loop('Hide', FilterExpr('False')),
         FilterCall($native['Array_Clear'], [$local('Actors')]),
-        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'QuerySelected', 'BooleanExpression' => FilterCall($native['EqualEqual_NameName'], [FilterVariable($owner, 'SSOverlaySelectedTag', true), FilterExpr('NameConst', ['Value' => 'None'])])]),
-        FilterExpr('Jump', ['CodeOffset' => 0, '__target' => 'Cache']), ['label' => 'QuerySelected'],
-        FilterCall($native['GetAllActorsWithTag'], [FilterExpr('Self'), FilterVariable($owner, 'SSOverlaySelectedTag', true), $local('Actors')]),
+        // Several types may be selected; collect each one's cached actors.
+        ...array_merge([], ...array_map(static fn(array $filter): array => [
+            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Query_' . $filter['key'], 'BooleanExpression' => FilterVariable($owner, $filter['state'], true)]),
+            // A known zone queries only that zone's pins; an unknown zone falls back to every pin.
+            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'AllZones_' . $filter['key'], 'BooleanExpression' => FilterCall($native['Greater_IntInt'], [FilterVariable($owner, 'SSOverlayZone', true), FilterExpr('IntConst', ['Value' => 0])])]),
+            FilterCall($native['GetAllActorsWithTag'], [FilterExpr('Self'), FilterCall($native['Conv_StringToName'], [FilterCall($native['Concat_StrStr'], [
+                FilterExpr('StringConst', ['Value' => 'SaveStats.TypeZone.' . $filter['key'] . '.']), FilterCall($native['Conv_IntToString'], [FilterVariable($owner, 'SSOverlayZone', true)])])]), $local('TypeActors')]),
+            FilterExpr('Jump', ['CodeOffset' => 0, '__target' => 'Append_' . $filter['key']]), ['label' => 'AllZones_' . $filter['key']],
+            FilterCall($native['GetAllActorsWithTag'], [FilterExpr('Self'), FilterExpr('NameConst', ['Value' => $filter['tag']]), $local('TypeActors')]),
+            ['label' => 'Append_' . $filter['key']],
+            FilterCall($native['Array_Append'], [$local('Actors'), $local('TypeActors')]),
+            ['label' => 'Query_' . $filter['key']],
+        ], $typeFilters)),
         ...$loop('Show', FilterCall($native['BooleanAND'], [$source, FilterCall($native['BooleanAND'], [FilterCall($native['Not_PreBool'], [FilterCall($native['IsActorSolved'], [$local('CurrentActor')], 'LocalFinalFunction')]), FilterCall($native['BooleanAND'], [FilterCall($native['AllowsPentadActor'], [$local('CurrentActor')], 'LocalFinalFunction'), FilterCall($native['IsActorAvailable'], [$local('CurrentActor')], 'LocalFinalFunction')])])])),
         ['label' => 'Cache'],
         FilterExpr('Let', ['Value' => FilterPointer($owner, 'SSOverlayPreviousActors'), 'Variable' => FilterVariable($owner, 'SSOverlayPreviousActors', true), 'Expression' => $local('Actors')]),
@@ -335,7 +354,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         if (str_starts_with($export->ObjectName ?? '', 'SSOverlay')) { throw new RuntimeException('Widget already contains overlay filters.'); }
         $byName[$export->ObjectName] = $index + 1;
     }
-    foreach (['WBP_LargeMap_C', 'Default__WBP_LargeMap_C', 'WidgetTree', 'ComponentDelegateBinding_0', 'OnNextZoneClicked', 'ZoneNameText'] as $required) {
+    foreach (['WBP_LargeMap_C', 'Default__WBP_LargeMap_C', 'WidgetTree', 'ComponentDelegateBinding_0', 'OnNextZoneClicked', 'ZoneNameText', 'Legend_Panel', 'VerticalBox_100', 'Border_76', 'Image_2'] as $required) {
         if (!isset($byName[$required])) { throw new RuntimeException("Map widget is missing {$required}."); }
     }
     $classIndex = $byName['WBP_LargeMap_C'];
@@ -375,28 +394,43 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $native['Widget'] = OverlayImport($asset, 'Widget', $umg, '/Script/CoreUObject', 'Class');
     $native['UserWidget'] = OverlayImport($asset, 'UserWidget', $umg, '/Script/CoreUObject', 'Class');
     $native['WidgetBlueprintLibrary'] = OverlayImport($asset, 'WidgetBlueprintLibrary', $umg, '/Script/CoreUObject', 'Class');
-    foreach (['GetAllActorsWithTag' => 'GameplayStatics', 'Array_Get' => 'KismetArrayLibrary', 'Array_Length' => 'KismetArrayLibrary', 'Array_Clear' => 'KismetArrayLibrary', 'EqualEqual_NameName' => 'KismetMathLibrary',
+    $native['KismetStringLibrary'] = OverlayImport($asset, 'KismetStringLibrary', $engine, '/Script/CoreUObject', 'Class');
+    $native['EditableTextBox'] = OverlayImport($asset, 'EditableTextBox', $umg, '/Script/CoreUObject', 'Class');
+    foreach (['MapWidget', 'SophiaGameplayStatics', 'ZoneData', 'ZoneDataEntry'] as $name) { $native[$name] = OverlayImport($asset, $name, $game, '/Script/CoreUObject', 'Class'); }
+    foreach (['GetAllActorsWithTag' => 'GameplayStatics', 'Array_Get' => 'KismetArrayLibrary', 'Array_Length' => 'KismetArrayLibrary', 'Array_Clear' => 'KismetArrayLibrary', 'Array_Append' => 'KismetArrayLibrary', 'EqualEqual_NameName' => 'KismetMathLibrary', 'Or_IntInt' => 'KismetMathLibrary', 'And_IntInt' => 'KismetMathLibrary', 'NotEqual_IntInt' => 'KismetMathLibrary',
         'BooleanAND' => 'KismetMathLibrary', 'BooleanOR' => 'KismetMathLibrary', 'Less_IntInt' => 'KismetMathLibrary', 'Add_IntInt' => 'KismetMathLibrary', 'EqualEqual_ObjectObject' => 'KismetMathLibrary', 'EqualEqual_IntInt' => 'KismetMathLibrary',
         'Add_FloatFloat' => 'KismetMathLibrary', 'Less_FloatFloat' => 'KismetMathLibrary', 'Conv_StringToText' => 'KismetTextLibrary',
         'ActorHasTag' => 'Actor', 'GetComponentByClass' => 'Actor', 'IsValid' => 'KismetSystemLibrary', 'GetOuterObject' => 'KismetSystemLibrary',
-        'GetPlayerController' => 'GameplayStatics', 'GetHUD' => 'PlayerController', 'GetOwningPlayer' => 'Widget', 'IsInViewport' => 'UserWidget', 'GetAllWidgetsOfClass' => 'WidgetBlueprintLibrary'] as $method => $owner) {
+        'GetPlayerController' => 'GameplayStatics', 'GetHUD' => 'PlayerController', 'GetOwningPlayer' => 'Widget', 'IsInViewport' => 'UserWidget', 'GetAllWidgetsOfClass' => 'WidgetBlueprintLibrary',
+        'Contains' => 'KismetStringLibrary', 'Len' => 'KismetStringLibrary', 'ToUpper' => 'KismetStringLibrary', 'Subtract_IntInt' => 'KismetMathLibrary', 'Conv_StringToName' => 'KismetStringLibrary', 'Concat_StrStr' => 'KismetStringLibrary', 'Conv_IntToString' => 'KismetStringLibrary', 'Conv_ByteToInt' => 'KismetMathLibrary', 'Greater_IntInt' => 'KismetMathLibrary', 'EqualEqual_BoolBool' => 'KismetMathLibrary',
+        'GetSelectedZoneIndex' => 'MapWidget', 'GetZoneData' => 'SophiaGameplayStatics', 'ZoneIndex_to_Zone' => 'ZoneData'] as $method => $owner) {
         $native[$method] = OverlayImport($asset, $method, $native[$owner], '/Script/CoreUObject', 'Function');
     }
     $widgetClasses = [];
-    foreach (['Border', 'BorderSlot', 'CanvasPanelSlot', 'ScrollBox', 'ScrollBoxSlot', 'VerticalBox', 'VerticalBoxSlot', 'HorizontalBox', 'HorizontalBoxSlot', 'Image', 'CheckBox', 'PanelSlot', 'TextBlock', 'Button', 'ButtonSlot'] as $name) {
+    foreach (['Border', 'BorderSlot', 'CanvasPanelSlot', 'ScrollBox', 'ScrollBoxSlot', 'VerticalBox', 'VerticalBoxSlot', 'HorizontalBox', 'HorizontalBoxSlot', 'Image', 'CheckBox', 'PanelSlot', 'TextBlock', 'Button', 'ButtonSlot', 'EditableTextBox'] as $name) {
         $widgetClasses[$name] = [OverlayImport($asset, $name, $umg, '/Script/CoreUObject', 'Class'),
             OverlayImport($asset, 'Default__' . $name, $umg, '/Script/UMG', $name)];
     }
     $native['SetIsChecked'] = OverlayImport($asset, 'SetIsChecked', $widgetClasses['CheckBox'][0], '/Script/CoreUObject', 'Function');
     $native['SetText'] = OverlayImport($asset, 'SetText', $widgetClasses['TextBlock'][0], '/Script/CoreUObject', 'Function');
+    $native['GetTextBox'] = OverlayImport($asset, 'GetText', $native['EditableTextBox'], '/Script/CoreUObject', 'Function');
+    $native['SetVisibility'] = OverlayImport($asset, 'SetVisibility', $native['Widget'], '/Script/CoreUObject', 'Function');
+    $native['IsHovered'] = OverlayImport($asset, 'IsHovered', $native['Widget'], '/Script/CoreUObject', 'Function');
+    $native['IsVisible'] = OverlayImport($asset, 'IsVisible', $native['Widget'], '/Script/CoreUObject', 'Function');
+    $native['Conv_TextToString'] = OverlayImport($asset, 'Conv_TextToString', $native['KismetTextLibrary'], '/Script/CoreUObject', 'Function');
+    foreach (['DisableInteraction', 'EnableInteraction'] as $method) { $native[$method] = OverlayImport($asset, $method, $native['MapWidget'], '/Script/CoreUObject', 'Function'); }
     $catalog ??= GetOverlayTypes();
     unset($catalog['spawnSite']);
+    // Players read the on-screen names; internal keys only identify assets and radar slots.
+    uasort($catalog, static fn(array $a, array $b): int => strcasecmp($a['name'], $b['name']));
     $counts = $document->counts ?? new stdClass();
     $filters = [];
-    foreach (['spawn' => 'Include possible spawn sites'] as $source => $label) {
+    foreach (['spawn' => 'Show possible sites'] as $source => $label) {
         $filters[] = ['key' => $source, 'group' => 'source', 'label' => $label, 'default' => false,
             'state' => 'SSOverlaySource_' . $source, 'tag' => 'SaveStats.Source.' . $source];
     }
+    $filters[] = ['key' => 'hideDone', 'group' => 'view', 'label' => 'Hide completed', 'default' => false,
+        'state' => 'SSOverlayView_hideDone', 'tag' => 'SaveStats.View.hideDone'];
     $filters[] = ['key' => 'enabled', 'group' => 'radar', 'label' => 'Show gameplay radar', 'default' => true,
         'state' => 'SSOverlayRadarEnabled', 'tag' => 'SaveStats.RadarEnabled'];
     foreach ($catalog as $ptype => $type) {
@@ -404,6 +438,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         $filters[] = ['key' => $ptype, 'group' => 'type', 'label' => $type['name'], 'default' => false,
             'state' => 'SSOverlayType_' . $ptype, 'tag' => 'SaveStats.Type.' . $ptype];
     }
+    $typeFilters = array_values(array_filter($filters, static fn(array $filter): bool => $filter['group'] === 'type'));
     foreach ($filters as $filter) {
         $class->LoadedProperties[] = FilterField($boolTemplate, $filter['state'], 'CPF_Edit, CPF_BlueprintVisible');
         $default->Data[] = OverlayProperty('Bool', $filter['state'], $filter['default'] ? 1 : 0);
@@ -414,6 +449,16 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $default->Data[] = OverlayProperty('Bool', 'SSOverlayReset', 1);
     $class->LoadedProperties[] = FilterField($boolTemplate, 'SSOverlayRadarInitialized');
     $default->Data[] = OverlayProperty('Bool', 'SSOverlayRadarInitialized', 0);
+    $class->LoadedProperties[] = FilterField($intTemplate, 'SSOverlayZone');
+    $default->Data[] = OverlayProperty('Int', 'SSOverlayZone', 0);
+    $zoneLabel = FilterField($intTemplate, 'SSOverlayZoneLabel');
+    $zoneLabel->SerializedType = 'StrProperty';
+    $zoneLabel->ElementSize = 16;
+    $class->LoadedProperties[] = $zoneLabel;
+    $class->LoadedProperties[] = FilterField($boolTemplate, 'SSOverlayMapBlocked');
+    $default->Data[] = OverlayProperty('Bool', 'SSOverlayMapBlocked', 0);
+    $class->LoadedProperties[] = FilterField($intTemplate, 'SSOverlayCountRevision');
+    $default->Data[] = OverlayProperty('Int', 'SSOverlayCountRevision', -1);
     foreach (['SSOverlayRadarZoomIndex', 'SSOverlayRadarSizeIndex'] as $name) {
         $class->LoadedProperties[] = FilterField($intTemplate, $name);
         $default->Data[] = OverlayProperty('Int', $name, 1);
@@ -423,11 +468,6 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $floatTemplate->ElementSize = 4;
     $class->LoadedProperties[] = $floatTemplate;
     $default->Data[] = OverlayProperty('Float', 'SSOverlayRadarSyncElapsed', 0);
-    $selectedTag = FilterField($intTemplate, 'SSOverlaySelectedTag');
-    $selectedTag->SerializedType = 'NameProperty';
-    $selectedTag->ElementSize = 8;
-    $class->LoadedProperties[] = $selectedTag;
-    $default->Data[] = OverlayProperty('Name', 'SSOverlaySelectedTag', 'None');
     $radarReference = FilterField($objectTemplate, 'SSOverlayRadarState');
     $radarReference->PropertyClass = $native['RadarClass'];
     $class->LoadedProperties[] = $radarReference;
@@ -455,9 +495,9 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $syncReference->PropertyClass = $native['RadarClass'];
     $asset->Exports[] = FilterFunction($functionTemplate, $syncRadarIndex, $classIndex, 'SSOverlaySyncRadarView', [$syncReference, FilterField($boolTemplate, 'CheckValue')], FilterRadarSyncCode($classIndex, $syncRadarIndex, $native));
     $asset->Exports[] = FilterFunction($functionTemplate, $publishRadarIndex, $classIndex, 'SSOverlayPublishRadar', [
-        FilterField($selectedTag, 'RadarSelectedTag'), FilterField($boolTemplate, 'RadarIncludeSites'), FilterField($boolTemplate, 'RadarEnabled'),
+        FilterField($intTemplate, 'RadarSelectedMask'), FilterField($boolTemplate, 'RadarIncludeSites'), FilterField($boolTemplate, 'RadarEnabled'),
         FilterField($intTemplate, 'RadarZoomIndex'), FilterField($intTemplate, 'RadarSizeIndex'),
-    ], FilterRadarPublishCode($classIndex, $publishRadarIndex, $native));
+    ], FilterRadarPublishCode($classIndex, $publishRadarIndex, $native, $typeFilters));
     foreach (['SSOverlaySyncRadarView' => $syncRadarIndex, 'SSOverlayPublishRadar' => $publishRadarIndex] as $name => $index) {
         $class->FuncMap[] = [$name, $index];
         array_unshift($class->Children, $index);
@@ -474,6 +514,10 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $class->LoadedProperties[] = $previousActors;
     $locals[] = $actors;
     $locals[] = FilterField($intTemplate, 'Index');
+    $typeActors = unserialize(serialize($actors));
+    $typeActors->Name = 'TypeActors';
+    $typeActors->Inner->Name = 'TypeActors';
+    $locals[] = $typeActors;
     foreach (['CurrentActor' => 'Actor', 'Emitter' => 'MarkerEmitter'] as $name => $type) {
         $field = FilterField($objectTemplate, $name);
         $field->PropertyClass = $native[$type];
@@ -484,7 +528,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $refreshIndex = count($asset->Exports) + 1;
     $refreshName = 'SSOverlayRefresh';
     $refresh = FilterFunction($functionTemplate, $refreshIndex, $classIndex, $refreshName, $locals,
-        FilterRefreshCode($classIndex, $refreshIndex, $native));
+        FilterRefreshCode($classIndex, $refreshIndex, $native, $typeFilters));
     $asset->Exports[] = $refresh;
     $class->FuncMap[] = [$refreshName, $refreshIndex];
     array_unshift($class->Children, $refreshIndex);
@@ -504,133 +548,341 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         $newExports[] = $name;
         return $index;
     };
+    $color = static fn(string $name, float $r, float $g, float $b, float $a): object => FilterStruct($name, 'LinearColor', [(object)['$type' => 'UAssetAPI.PropertyTypes.Structs.LinearColorPropertyData, UAssetAPI', 'Name' => $name,
+        'Value' => (object)['$type' => 'UAssetAPI.UnrealTypes.FLinearColor, UAssetAPI', 'R' => $r, 'G' => $g, 'B' => $b, 'A' => $a]]]);
+    $margin = static fn(string $name, float $left, float $top, float $right, float $bottom): object => FilterStruct($name, 'Margin', [
+        OverlayProperty('Float', 'Left', $left), OverlayProperty('Float', 'Top', $top), OverlayProperty('Float', 'Right', $right), OverlayProperty('Float', 'Bottom', $bottom)]);
+    $variable = static function (string $name, string $type) use ($class, $objectTemplate, $widgetClasses): void {
+        $property = FilterField($objectTemplate, $name, 'CPF_BlueprintVisible, CPF_ExportObject, CPF_InstancedReference, CPF_RepSkip, CPF_PersistentInstance');
+        $property->PropertyClass = $widgetClasses[$type][0];
+        $class->LoadedProperties[] = $property;
+    };
+    $slotOf = static function (object $export): int {
+        foreach ($export->Data as $field) { if ($field->Name === 'Slot' && is_int($field->Value)) { return $field->Value; } }
+        throw new RuntimeException('Map legend widget ' . $export->ObjectName . ' has no slot.');
+    };
+    $offsetsOf = static function (object $slot): array {
+        $offsets = ['Left' => 0.0, 'Top' => 0.0, 'Right' => 0.0, 'Bottom' => 0.0];
+        $anchors = ['Minimum' => [0.0, 0.0], 'Maximum' => [0.0, 0.0]];
+        foreach ($slot->Data as $field) {
+            if ($field->Name !== 'LayoutData') { continue; }
+            foreach ($field->Value as $part) {
+                if ($part->Name === 'Offsets') { foreach ($part->Value as $edge) { $offsets[$edge->Name] = (float)$edge->Value; } }
+                if ($part->Name === 'Anchors') { foreach ($part->Value as $anchor) { $vector = is_array($anchor->Value) ? $anchor->Value[0]->Value : $anchor->Value; $anchors[$anchor->Name] = [(float)$vector->X, (float)$vector->Y]; } }
+            }
+        }
+        // Offsets are margins only for full-stretch anchors; anything else is an unreviewed layout.
+        if ($anchors !== ['Minimum' => [0.0, 0.0], 'Maximum' => [1.0, 1.0]]) { throw new RuntimeException('Expected full-stretch legend slots in Legend_Panel.'); }
+        return $offsets;
+    };
+
+    // The puzzle and radar controls live inside the game's own legend box as tabs;
+    // the map's detail popover owns the left side of the screen.
+    $legendIndex = $byName['Legend_Panel'];
+    $legend = $asset->Exports[$legendIndex - 1];
+    $legendItemsIndex = $byName['VerticalBox_100'];
+    $legendItems = $asset->Exports[$legendItemsIndex - 1];
+    if (($asset->Imports[-1 - $legend->ClassIndex]->ObjectName ?? '') !== 'CanvasPanel' || $asset->Exports[$slotOf($legendItems) - 1]->OuterIndex !== $legendIndex) {
+        throw new RuntimeException('Expected the map legend list inside the Legend_Panel canvas.');
+    }
+    $items = $offsetsOf($asset->Exports[$slotOf($legendItems) - 1]);
+    $backgroundSlot = $asset->Exports[$slotOf($asset->Exports[$byName['Border_76'] - 1]) - 1];
+    if ($backgroundSlot->OuterIndex !== $legendIndex) { throw new RuntimeException('Expected the legend background inside Legend_Panel.'); }
+    $tabHeight = 34.0;
+    $extraDepth = 40.0;
+    $originalBackground = $offsetsOf($backgroundSlot);
+    $backgroundTop = $originalBackground['Top'] - ($tabHeight + 10);
+    // The game's legend art bleeds past the screen edge; ours stops at Legend_Panel's right edge
+    // (Right 0) so the box keeps a gap on every aspect ratio, and reaches a little deeper.
+    $frame = ['Left' => $originalBackground['Left'], 'Top' => $backgroundTop, 'Right' => 0.0, 'Bottom' => $originalBackground['Bottom'] - $extraDepth];
+    $setEdges = static function (object $slot, array $edges): void {
+        foreach ($slot->Data as $field) {
+            if ($field->Name !== 'LayoutData') { continue; }
+            foreach ($field->Value as $part) {
+                if ($part->Name !== 'Offsets') { continue; }
+                $present = array_column($part->Value, null, 'Name');
+                foreach ($edges as $name => $value) {
+                    if (isset($present[$name])) { $present[$name]->Value = $value; } else { $part->Value[] = OverlayProperty('Float', $name, $value); }
+                }
+            }
+        }
+    };
+    $setEdges($backgroundSlot, $frame);
+    // The legend's bottom ornament (Image_2) follows the deeper frame.
+    $ornamentSlot = $asset->Exports[$slotOf($asset->Exports[$byName['Image_2'] - 1]) - 1];
+    if ($ornamentSlot->OuterIndex !== $legendIndex) { throw new RuntimeException('Expected the legend ornament inside Legend_Panel.'); }
+    $ornament = [];
+    foreach ($ornamentSlot->Data as $field) {
+        if ($field->Name !== 'LayoutData') { continue; }
+        foreach ($field->Value as $part) { if ($part->Name === 'Offsets') { foreach ($part->Value as $edge) { $ornament[$edge->Name] = (float)$edge->Value; } } }
+    }
+    $setEdges($ornamentSlot, ['Top' => ($ornament['Top'] ?? 0) + $extraDepth, 'Bottom' => ($ornament['Bottom'] ?? 0) - $extraDepth]);
+    $legendItems->Data[] = OverlayProperty('Bool', 'bIsVariable', 1);
+    // WBP_QuestContainer (400x800, right-anchored) follows the legend in RootPanel and swallows its
+    // clicks. Lift the legend above it, still under the fast-travel prompt (ZOrder 100); the game
+    // collapses the legend together with the quest tracker when the zone overview opens.
+    $legendRootSlot = $asset->Exports[$slotOf($legend) - 1];
+    if ($legendRootSlot->OuterIndex !== $rootIndex) { throw new RuntimeException('Expected Legend_Panel directly inside the map root canvas.'); }
+    $legendRootSlot->Data = array_values(array_filter($legendRootSlot->Data, static fn(object $field): bool => $field->Name !== 'ZOrder'));
+    array_splice($legendRootSlot->Data, 1, 0, [OverlayProperty('Int', 'ZOrder', 90)]);
+    $variable('VerticalBox_100', 'VerticalBox');
+    $legendSlot = static function (string $name, int $content, array $offsets, float $anchorBottom) use ($asset, $appendWidget, $legendIndex, $legend, $margin): int {
+        $slot = $appendWidget('CanvasPanelSlot', $name, $legendIndex, [
+            FilterStruct('LayoutData', 'AnchorData', [$margin('Offsets', $offsets['Left'], $offsets['Top'], $offsets['Right'], $offsets['Bottom']),
+                FilterStruct('Anchors', 'Anchors', [FilterVector('Minimum', 0, 0), FilterVector('Maximum', 1, $anchorBottom)]), FilterVector('Alignment', 0, 0)]),
+            OverlayProperty('Int', 'ZOrder', 10), OverlayProperty('Object', 'Parent', $legendIndex), OverlayProperty('Object', 'Content', $content),
+        ]);
+        $asset->Exports[$content - 1]->Data[] = OverlayProperty('Object', 'Slot', $slot);
+        foreach ($legend->Data as $field) { if ($field->Name === 'Slots') { $field->Value[] = OverlayProperty('Object', '0', $slot); } }
+        $legend->CreateBeforeSerializationDependencies[] = $slot;
+        return $slot;
+    };
+
+    $backgroundOffsets = $frame;
+    $backdrop = $appendWidget('Border', 'SSOverlayBackdrop', $treeIndex, [OverlayProperty('Bool', 'bIsVariable', 1), $color('BrushColor', 0.018, 0.04, 0.05, 0.9)]);
+    // One size for every tab (no jump when switching).
+    $backdropSlot = $legendSlot('SSOverlayBackdropSlot', $backdrop, $frame, 1);
+    foreach ($legend->Data as $field) {
+        if ($field->Name === 'Slots') { $last = array_pop($field->Value); array_unshift($field->Value, $last); }
+    }
+    foreach ($asset->Exports[$backdropSlot - 1]->Data as $field) { if ($field->Name === 'ZOrder') { $field->Value = 0; } }
+    $variable('SSOverlayBackdrop', 'Border');
+    // Our content spans the full backdrop width (the game's own list sits further in).
+    $contentArea = ['Left' => $frame['Left'] + 16, 'Top' => $items['Top'], 'Right' => $frame['Right'] + 16, 'Bottom' => $frame['Bottom'] + 12];
     $panelIndex = $appendWidget('Border', 'SSOverlayPanel', $treeIndex);
+    $layoutIndex = $appendWidget('VerticalBox', 'SSOverlayPuzzleLayout', $treeIndex, [FilterArray('Slots', [])]);
     $scrollIndex = $appendWidget('ScrollBox', 'SSOverlayScroll', $treeIndex);
     $listIndex = $appendWidget('VerticalBox', 'SSOverlayList', $treeIndex);
-    $innerIndex = $appendWidget('Border', 'SSOverlayPanelInner', $treeIndex);
-    $borderSlot = $appendWidget('BorderSlot', 'SSOverlayBorderSlot', $panelIndex, [OverlayProperty('Object', 'Parent', $panelIndex), OverlayProperty('Object', 'Content', $innerIndex)]);
-    $innerSlot = $appendWidget('BorderSlot', 'SSOverlayInnerSlot', $innerIndex, [OverlayProperty('Object', 'Parent', $innerIndex), OverlayProperty('Object', 'Content', $scrollIndex)]);
+    $borderSlot = $appendWidget('BorderSlot', 'SSOverlayBorderSlot', $panelIndex, [OverlayProperty('Object', 'Parent', $panelIndex), OverlayProperty('Object', 'Content', $layoutIndex)]);
+    $asset->Exports[$layoutIndex - 1]->Data[] = OverlayProperty('Object', 'Slot', $borderSlot);
     $scrollSlot = $appendWidget('ScrollBoxSlot', 'SSOverlayScrollSlot', $scrollIndex, [OverlayProperty('Object', 'Parent', $scrollIndex), OverlayProperty('Object', 'Content', $listIndex)]);
-    $canvasSlot = $appendWidget('CanvasPanelSlot', 'SSOverlayCanvasSlot', $rootIndex, [
-        FilterStruct('LayoutData', 'AnchorData', [FilterStruct('Offsets', 'Margin', [
-            OverlayProperty('Float', 'Left', 24), OverlayProperty('Float', 'Top', -130), OverlayProperty('Float', 'Right', 280), OverlayProperty('Float', 'Bottom', 430),
-        ]), FilterStruct('Anchors', 'Anchors', [FilterVector('Minimum', 0, 1), FilterVector('Maximum', 0, 1)]), FilterVector('Alignment', 0, 1)]), OverlayProperty('Int', 'ZOrder', 200), OverlayProperty('Object', 'Parent', $rootIndex), OverlayProperty('Object', 'Content', $panelIndex),
-    ]);
-    $asset->Exports[$panelIndex - 1]->Data = [FilterArray('Slots', [$borderSlot]), OverlayProperty('Object', 'Slot', $canvasSlot),
-        OverlayProperty('Bool', 'bIsVariable', 1), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed'),
-        FilterStruct('BrushColor', 'LinearColor', [(object)['$type' => 'UAssetAPI.PropertyTypes.Structs.LinearColorPropertyData, UAssetAPI', 'Name' => 'BrushColor',
-            'Value' => (object)['$type' => 'UAssetAPI.UnrealTypes.FLinearColor, UAssetAPI', 'R' => 0.56, 'G' => 0.40, 'B' => 0.16, 'A' => 0.95]]]),
-        FilterStruct('Padding', 'Margin', [OverlayProperty('Float', 'Left', 1), OverlayProperty('Float', 'Top', 1), OverlayProperty('Float', 'Right', 1), OverlayProperty('Float', 'Bottom', 1)]),
-    ];
-    $asset->Exports[$innerIndex - 1]->Data = [FilterArray('Slots', [$innerSlot]), OverlayProperty('Object', 'Slot', $borderSlot),
-        FilterStruct('BrushColor', 'LinearColor', [(object)['$type' => 'UAssetAPI.PropertyTypes.Structs.LinearColorPropertyData, UAssetAPI', 'Name' => 'BrushColor', 'Value' => (object)['$type' => 'UAssetAPI.UnrealTypes.FLinearColor, UAssetAPI', 'R' => 0.025, 'G' => 0.055, 'B' => 0.065, 'A' => 0.97]]]),
-        FilterStruct('Padding', 'Margin', [OverlayProperty('Float', 'Left', 10), OverlayProperty('Float', 'Top', 8), OverlayProperty('Float', 'Right', 10), OverlayProperty('Float', 'Bottom', 8)])];
-    $asset->Exports[$scrollIndex - 1]->Data = [FilterArray('Slots', [$scrollSlot]), OverlayProperty('Object', 'Slot', $innerSlot),
-        FilterEnum('ConsumeMouseWheel', 'EConsumeMouseWheel', 'Always')];
+    $asset->Exports[$panelIndex - 1]->Data = [FilterArray('Slots', [$borderSlot]), OverlayProperty('Bool', 'bIsVariable', 1), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed'),
+        $color('BrushColor', 0, 0, 0, 0), $margin('Padding', 0, 0, 0, 0)];
+    $legendSlot('SSOverlayPanelSlot', $panelIndex, $contentArea, 1);
+    $tintBrush = static fn(string $name, float $r, float $g, float $b, float $a): object => FilterStruct($name, 'SlateBrush', [FilterStruct('TintColor', 'SlateColor', [$color('SpecifiedColor', $r, $g, $b, $a)])]);
+    $asset->Exports[$scrollIndex - 1]->Data = [FilterArray('Slots', [$scrollSlot]),
+        FilterEnum('ConsumeMouseWheel', 'EConsumeMouseWheel', 'Always'), FilterVector('ScrollbarThickness', 4, 4), $margin('ScrollbarPadding', 4, 0, 0, 0),
+        FilterStruct('WidgetBarStyle', 'ScrollBarStyle', [
+            $tintBrush('NormalThumbImage', 0.56, 0.40, 0.16, 1), $tintBrush('HoveredThumbImage', 0.86, 0.71, 0.39, 1), $tintBrush('DraggedThumbImage', 0.86, 0.71, 0.39, 1),
+            $tintBrush('VerticalBackgroundImage', 1, 1, 1, 0.04), $tintBrush('VerticalTopSlotImage', 0, 0, 0, 0), $tintBrush('VerticalBottomSlotImage', 0, 0, 0, 0),
+            $tintBrush('HorizontalBackgroundImage', 0, 0, 0, 0), $tintBrush('HorizontalTopSlotImage', 0, 0, 0, 0), $tintBrush('HorizontalBottomSlotImage', 0, 0, 0, 0)])];
     $asset->Exports[$listIndex - 1]->Data = [FilterArray('Slots', []), OverlayProperty('Object', 'Slot', $scrollSlot)];
-    foreach ($root->Data as $field) { if ($field->Name === 'Slots') { $field->Value[] = OverlayProperty('Object', '0', $canvasSlot); } }
+    $radarPanelIndex = $appendWidget('VerticalBox', 'SSOverlayRadarPanel', $treeIndex, [FilterArray('Slots', []), OverlayProperty('Bool', 'bIsVariable', 1), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed')]);
+    $legendSlot('SSOverlayRadarPanelSlot', $radarPanelIndex, $contentArea, 1);
+    $tabsIndex = $appendWidget('HorizontalBox', 'SSOverlayTabs', $treeIndex, [FilterArray('Slots', [])]);
+    $legendSlot('SSOverlayTabsSlot', $tabsIndex, ['Left' => $contentArea['Left'], 'Top' => $backgroundTop + 6, 'Right' => $contentArea['Right'], 'Bottom' => $tabHeight], 0);
+    $variable('SSOverlayPanel', 'Border');
+    $variable('SSOverlayRadarPanel', 'VerticalBox');
+    $variable('SSOverlayTabs', 'HorizontalBox');
+
     $font = null;
-    foreach ($asset->Exports[$byName['ZoneNameText'] - 1]->Data as $field) { if ($field->Name === 'Font') { $font = unserialize(serialize($field)); } }
-    if ($font === null) { throw new RuntimeException('Map widget has no reusable text font.'); }
+    $textColor = null;
+    foreach ($asset->Exports[$byName['ZoneNameText'] - 1]->Data as $field) {
+        if ($field->Name === 'Font') { $font = unserialize(serialize($field)); }
+        if ($field->Name === 'ColorAndOpacity') { $textColor = unserialize(serialize($field)); }
+    }
+    if ($font === null || $textColor === null) { throw new RuntimeException('Map widget has no reusable text font and colour.'); }
     $font->Value = array_values(array_filter($font->Value, static fn(object $field): bool => $field->Name !== 'Size'));
     $font->Value[] = OverlayProperty('Int', 'Size', 14);
-    $addRow = static function (int $content) use ($asset, $appendWidget, $listIndex): void {
-        $slot = $appendWidget('VerticalBoxSlot', 'SSOverlayRowSlot_' . $content, $listIndex, [
-            FilterStruct('Padding', 'Margin', [OverlayProperty('Float', 'Top', 2), OverlayProperty('Float', 'Bottom', 2)]),
-            OverlayProperty('Object', 'Parent', $listIndex), OverlayProperty('Object', 'Content', $content),
+    $sizedFont = static function (int $size) use ($font): object {
+        $copy = unserialize(serialize($font));
+        foreach ($copy->Value as $field) { if ($field->Name === 'Size') { $field->Value = $size; } }
+        return $copy;
+    };
+    $addRowTo = static function (int $box, int $content, float $gap = 2) use ($asset, $appendWidget): void {
+        $slot = $appendWidget('VerticalBoxSlot', 'SSOverlayRowSlot_' . $content, $box, [
+            FilterStruct('Padding', 'Margin', [OverlayProperty('Float', 'Top', $gap), OverlayProperty('Float', 'Bottom', $gap)]),
+            OverlayProperty('Object', 'Parent', $box), OverlayProperty('Object', 'Content', $content),
         ]);
-        $asset->Exports[$listIndex - 1]->Data[0]->Value[] = OverlayProperty('Object', '0', $slot);
+        $asset->Exports[$box - 1]->Data[0]->Value[] = OverlayProperty('Object', '0', $slot);
         $asset->Exports[$content - 1]->Data[] = OverlayProperty('Object', 'Slot', $slot);
     };
-    $text = static function (string $name, string $value) use ($appendWidget, $treeIndex, $font): int {
-        return $appendWidget('TextBlock', $name, $treeIndex, [OverlayText('Text', $value), unserialize(serialize($font)), OverlayProperty('Bool', 'AutoWrapText', 1)]);
+    $addRow = static fn(int $content) => $addRowTo($listIndex, $content, 1);
+    $addRadarRow = static fn(int $content) => $addRowTo($radarPanelIndex, $content, 5);
+    $text = static function (string $name, string $value, int $size = 14, array $extra = [], bool $wrap = true, ?object $colour = null) use ($appendWidget, $treeIndex, $sizedFont, $textColor): int {
+        return $appendWidget('TextBlock', $name, $treeIndex, [OverlayText('Text', $value), $sizedFont($size), $colour ?? unserialize(serialize($textColor)), OverlayProperty('Bool', 'AutoWrapText', $wrap ? 1 : 0), ...$extra]);
     };
-    $addRow($text('SSOverlayTitle', 'ONE PUZZLE TYPE'));
+    $slateColour = static fn(float $r, float $g, float $b, float $a = 1): object => FilterStruct('ColorAndOpacity', 'SlateColor', [$color('SpecifiedColor', $r, $g, $b, $a)]);
+    $muted = static fn(): object => $slateColour(0.62, 0.70, 0.70);
+    $gold = static fn(): object => $slateColour(0.86, 0.71, 0.39);
+    $addLayoutRow = static function (int $content, float $top = 2, float $bottom = 2, bool $fill = false) use ($asset, $appendWidget, $layoutIndex, $margin): void {
+        $slot = $appendWidget('VerticalBoxSlot', 'SSOverlayLayoutSlot_' . $content, $layoutIndex, [$margin('Padding', 0, $top, 0, $bottom),
+            OverlayProperty('Object', 'Parent', $layoutIndex), OverlayProperty('Object', 'Content', $content),
+            ...($fill ? [FilterStruct('Size', 'SlateChildSize', [OverlayProperty('Float', 'Value', 1), FilterEnum('SizeRule', 'ESlateSizeRule', 'Fill')])] : [])]);
+        $asset->Exports[$layoutIndex - 1]->Data[0]->Value[] = OverlayProperty('Object', '0', $slot);
+        $asset->Exports[$content - 1]->Data[] = OverlayProperty('Object', 'Slot', $slot);
+    };
+    $rule = static fn(string $name): int => $appendWidget('Border', $name, $treeIndex, [$color('BrushColor', 0.86, 0.71, 0.39, 0.35), $margin('Padding', 0, 0.5, 0, 0.5)]);
+    $hudTexture = static function (string $name) use ($asset): int {
+        $package = OverlayImport($asset, '/Game/ASophia/UI/HUD/Markers/Textures/' . $name, 0, '/Script/CoreUObject', 'Package');
+        return OverlayImport($asset, $name, $package, '/Script/Engine', 'Texture2D');
+    };
+    $boxBrush = static fn(string $name, string $texture): object => FilterStruct($name, 'SlateBrush', [FilterVector('ImageSize', 32, 32), OverlayProperty('Object', 'ResourceObject', $hudTexture($texture)),
+        FilterEnum('DrawAs', 'ESlateBrushDrawType', 'Box'), $margin('Margin', 0.25, 0.25, 0.25, 0.25)]);
+    $gameButton = static fn(): object => FilterStruct('WidgetStyle', 'ButtonStyle', [$boxBrush('Normal', 'SSButtonN'), $boxBrush('Hovered', 'SSButtonH'), $boxBrush('Pressed', 'SSButtonP'),
+        $margin('NormalPadding', 6, 3, 6, 3), $margin('PressedPadding', 6, 4, 6, 2)]);
+    $checkOff = $hudTexture('SSCheckNo');
+    $checkOn = $hudTexture('SSCheckOn');
+    $checkBrush = static fn(string $name, int $texture): object => FilterStruct($name, 'SlateBrush', [FilterVector('ImageSize', 18, 18), OverlayProperty('Object', 'ResourceObject', $texture)]);
+    $toggleOff = $hudTexture('SSToggle0');
+    $toggleOn = $hudTexture('SSToggle1');
+    $toggleBrush = static fn(string $name, int $texture): object => FilterStruct($name, 'SlateBrush', [FilterVector('ImageSize', 36, 18), OverlayProperty('Object', 'ResourceObject', $texture)]);
+    $toggleStyle = static fn(): object => FilterStruct('WidgetStyle', 'CheckBoxStyle', [
+        $toggleBrush('UncheckedImage', $toggleOff), $toggleBrush('UncheckedHoveredImage', $toggleOff), $toggleBrush('UncheckedPressedImage', $toggleOn),
+        $toggleBrush('CheckedImage', $toggleOn), $toggleBrush('CheckedHoveredImage', $toggleOn), $toggleBrush('CheckedPressedImage', $toggleOff)]);
+    $checkStyle = static fn(): object => FilterStruct('WidgetStyle', 'CheckBoxStyle', [
+        $checkBrush('UncheckedImage', $checkOff), $checkBrush('UncheckedHoveredImage', $checkOff), $checkBrush('UncheckedPressedImage', $checkOn),
+        $checkBrush('CheckedImage', $checkOn), $checkBrush('CheckedHoveredImage', $checkOn), $checkBrush('CheckedPressedImage', $checkOff)]);
+    $voidPointer = FilterVoidPointer();
+    $show = static fn(string $name, int $visibility): object => FilterContext(FilterVariable($classIndex, $name, true), FilterCall($native['SetVisibility'], [FilterExpr('ByteConst', ['Value' => $visibility])], 'FinalFunction'), $voidPointer);
+    $bindClick = static function (string $component, string $function) use ($delegateBindings): void {
+        $delegateBindings->Value[] = FilterStruct('ComponentDelegateBindings', 'BlueprintComponentDelegateBinding', [
+            OverlayProperty('Name', 'ComponentPropertyName', $component), OverlayProperty('Name', 'DelegatePropertyName', 'OnClicked'), OverlayProperty('Name', 'FunctionNameToBind', $function),
+        ]);
+    };
+    $addFunction = static function (string $name, array $locals, array $code) use ($asset, $class, $classIndex, $functionTemplate, &$functions): int {
+        $index = count($asset->Exports) + 1;
+        $asset->Exports[] = FilterFunction($functionTemplate, $index, $classIndex, $name, $locals, $code);
+        $functions[] = $name;
+        $class->FuncMap[] = [$name, $index];
+        array_unshift($class->Children, $index);
+        return $index;
+    };
+
+    // Tabs: Legend shows the game's own list, Puzzles and Radar show ours.
+    $tabs = ['Legend' => 'LEGEND', 'Puzzles' => 'PUZZLES', 'Radar' => 'RADAR'];
+    $tabPanels = ['Legend' => 'VerticalBox_100', 'Puzzles' => 'SSOverlayPanel', 'Radar' => 'SSOverlayRadarPanel'];
+    $tabSlots = [];
+    foreach ($tabs as $tab => $label) {
+        $buttonName = 'SSOverlayTab' . $tab;
+        $buttonIndex = $appendWidget('Button', $buttonName, $treeIndex, [OverlayProperty('Bool', 'bIsVariable', 1), $color('BackgroundColor', 0, 0, 0, 0)]);
+        $stack = $appendWidget('VerticalBox', $buttonName . '_Stack', $treeIndex, [FilterArray('Slots', [])]);
+        $addRowTo($stack, $text($buttonName . '_Text', $label, 13, [FilterEnum('Justification', 'ETextJustify', 'Center')], false), 0);
+        $mark = $appendWidget('Border', $buttonName . '_Mark', $treeIndex, [OverlayProperty('Bool', 'bIsVariable', 1), $color('BrushColor', 0.86, 0.71, 0.39, 1),
+            $margin('Padding', 0, 1, 0, 1), FilterEnum('Visibility', 'ESlateVisibility', $tab === 'Legend' ? 'Visible' : 'Hidden')]);
+        $addRowTo($stack, $mark, 1);
+        $content = $appendWidget('ButtonSlot', $buttonName . '_Content', $buttonIndex, [OverlayProperty('Object', 'Parent', $buttonIndex), OverlayProperty('Object', 'Content', $stack),
+            $margin('Padding', 4, 2, 4, 2)]);
+        $asset->Exports[$buttonIndex - 1]->Data[] = FilterArray('Slots', [$content]);
+        $asset->Exports[$stack - 1]->Data[] = OverlayProperty('Object', 'Slot', $content);
+        $slot = $appendWidget('HorizontalBoxSlot', $buttonName . '_TabSlot', $tabsIndex, [OverlayProperty('Object', 'Parent', $tabsIndex), OverlayProperty('Object', 'Content', $buttonIndex),
+            FilterStruct('Size', 'SlateChildSize', [OverlayProperty('Float', 'Value', 1), FilterEnum('SizeRule', 'ESlateSizeRule', 'Fill')])]);
+        $asset->Exports[$buttonIndex - 1]->Data[] = OverlayProperty('Object', 'Slot', $slot);
+        $tabSlots[] = $slot;
+        $variable($buttonName, 'Button');
+        $variable($buttonName . '_Mark', 'Border');
+    }
+    $asset->Exports[$tabsIndex - 1]->Data[0] = FilterArray('Slots', $tabSlots);
+    foreach (array_keys($tabs) as $tab) {
+        $code = [FilterCall($syncRadarIndex, [], 'LocalFinalFunction')];
+        foreach ($tabPanels as $other => $panel) {
+            // Visible keeps legend items and our controls interactive inside the
+            // SelfHitTestInvisible Legend_Panel the game shows.
+            $code[] = $show($panel, $other === $tab ? 0 : 1);
+            $code[] = $show('SSOverlayTab' . $other . '_Mark', $other === $tab ? 0 : 2);
+        }
+        $addFunction('SSOverlayShowTab' . $tab, [], [...$code, ...FilterReturn()]);
+        $bindClick('SSOverlayTab' . $tab, 'SSOverlayShowTab' . $tab);
+    }
+
+    $zoneHeader = $text('SSOverlayZoneHeader', 'Waiting for the map...', 17, [OverlayProperty('Bool', 'bIsVariable', 1)], false);
+    $variable('SSOverlayZoneHeader', 'TextBlock');
+    $addLayoutRow($zoneHeader, 2, 0);
+    $zoneStatus = $text('SSOverlayZoneStatus', '', 13, [OverlayProperty('Bool', 'bIsVariable', 1)], false, $muted());
+    $variable('SSOverlayZoneStatus', 'TextBlock');
+    $addLayoutRow($zoneStatus, 0, 6);
+    $search = $appendWidget('EditableTextBox', 'SSOverlaySearch', $treeIndex, [OverlayProperty('Bool', 'bIsVariable', 1), OverlayText('HintText', 'Search puzzle types'),
+        FilterStruct('WidgetStyle', 'EditableTextBoxStyle', [$boxBrush('BackgroundImageNormal', 'SSButtonN'), $boxBrush('BackgroundImageHovered', 'SSButtonH'), $boxBrush('BackgroundImageFocused', 'SSButtonH'),
+            $boxBrush('BackgroundImageReadOnly', 'SSButtonN'), $margin('Padding', 8, 5, 8, 5), $sizedFont(14), FilterStruct('ForegroundColor', 'SlateColor', [$color('SpecifiedColor', 0.92, 0.88, 0.78, 1)])])]);
+    $variable('SSOverlaySearch', 'EditableTextBox');
+    $addLayoutRow($search, 0, 6);
+    $typesHeader = $appendWidget('HorizontalBox', 'SSOverlayTypesHeader', $treeIndex, [FilterArray('Slots', [])]);
+    $headerSlot = static function (int $child, bool $fill = false, float $left = 0) use ($asset, $appendWidget, $typesHeader, $margin): void {
+        $slot = $appendWidget('HorizontalBoxSlot', 'SSOverlayTypesHeaderSlot_' . $child, $typesHeader, [OverlayProperty('Object', 'Parent', $typesHeader), OverlayProperty('Object', 'Content', $child),
+            FilterEnum('VerticalAlignment', 'EVerticalAlignment', 'VAlign_Center'), $margin('Padding', $left, 0, 0, 0),
+            ...($fill ? [FilterStruct('Size', 'SlateChildSize', [OverlayProperty('Float', 'Value', 1), FilterEnum('SizeRule', 'ESlateSizeRule', 'Fill')])] : [])]);
+        $asset->Exports[$typesHeader - 1]->Data[0]->Value[] = OverlayProperty('Object', '0', $slot);
+        $asset->Exports[$child - 1]->Data[] = OverlayProperty('Object', 'Slot', $slot);
+    };
+    $headerSlot($text('SSOverlayTypesLabel', 'PUZZLE TYPES', 12, [], false, $gold()));
+    $headerSlot($rule('SSOverlayTypesRule'), true, 8);
     $buttons = [];
-    foreach (['None' => 'Clear selection'] as $action => $label) {
+    foreach (['None' => 'Clear'] as $action => $label) {
         $buttonName = 'SSOverlayButton' . $action;
-        $buttonIndex = $appendWidget('Button', $buttonName, $treeIndex, [OverlayProperty('Bool', 'bIsVariable', 1)]);
-        $buttonText = $text($buttonName . '_Text', $label);
-        $buttonSlot = $appendWidget('ButtonSlot', $buttonName . '_Content', $buttonIndex, [OverlayProperty('Object', 'Parent', $buttonIndex), OverlayProperty('Object', 'Content', $buttonText)]);
+        $buttonIndex = $appendWidget('Button', $buttonName, $treeIndex, [OverlayProperty('Bool', 'bIsVariable', 1), $color('BackgroundColor', 0, 0, 0, 0)]);
+        $buttonText = $text($buttonName . '_Text', $label, 13, [], false, $gold());
+        $buttonSlot = $appendWidget('ButtonSlot', $buttonName . '_Content', $buttonIndex, [OverlayProperty('Object', 'Parent', $buttonIndex), OverlayProperty('Object', 'Content', $buttonText), $margin('Padding', 4, 0, 0, 0)]);
         $asset->Exports[$buttonIndex - 1]->Data[] = FilterArray('Slots', [$buttonSlot]);
         $asset->Exports[$buttonText - 1]->Data[] = OverlayProperty('Object', 'Slot', $buttonSlot);
-        $addRow($buttonIndex);
-        $buttonProperty = FilterField($objectTemplate, $buttonName, 'CPF_BlueprintVisible, CPF_ExportObject, CPF_InstancedReference, CPF_RepSkip, CPF_PersistentInstance');
-        $buttonProperty->PropertyClass = $widgetClasses['Button'][0];
-        $class->LoadedProperties[] = $buttonProperty;
+        $headerSlot($buttonIndex, false, 4);
+        $variable($buttonName, 'Button');
         $buttons[] = $buttonName;
     }
+    $addLayoutRow($typesHeader, 0, 4);
+    $addLayoutRow($scrollIndex, 0, 4, true);
+    $addLayoutRow($rule('SSOverlayFooterRule'), 2, 4);
+    $addRadarRow($text('SSOverlayRadarTitle', 'GAMEPLAY RADAR', 17, [], false));
     $rangeText = $text('SSOverlayRadarRangeText', 'Radar range: 100 m');
     $asset->Exports[$rangeText - 1]->Data[] = OverlayProperty('Bool', 'bIsVariable', 1);
-    $rangeProperty = FilterField($objectTemplate, 'SSOverlayRadarRangeText', 'CPF_BlueprintVisible, CPF_ExportObject, CPF_InstancedReference, CPF_RepSkip, CPF_PersistentInstance');
-    $rangeProperty->PropertyClass = $widgetClasses['TextBlock'][0];
-    $class->LoadedProperties[] = $rangeProperty;
-    $addRow($rangeText);
-    $viewRow = $appendWidget('HorizontalBox', 'SSOverlayRadarViewControls', $treeIndex);
-    $viewSlots = [];
-    foreach (['ZoomOut' => ['-', 'SSRadarChangeZoom', 1], 'ZoomIn' => ['+', 'SSRadarChangeZoom', -1], 'RadarSize' => ['Size: 125%', 'SSRadarCycleSize', null]] as $action => [$label, $methodName, $delta]) {
-        $buttonName = 'SSOverlayButton' . $action;
-        $buttonIndex = $appendWidget('Button', $buttonName, $treeIndex, [OverlayProperty('Bool', 'bIsVariable', 1)]);
-        $textName = $action === 'RadarSize' ? 'SSOverlayRadarSizeText' : $buttonName . '_Text';
-        $buttonText = $text($textName, $label);
-        if ($action === 'RadarSize') {
-            $asset->Exports[$buttonText - 1]->Data[] = OverlayProperty('Bool', 'bIsVariable', 1);
-            $sizeProperty = FilterField($objectTemplate, $textName, 'CPF_BlueprintVisible, CPF_ExportObject, CPF_InstancedReference, CPF_RepSkip, CPF_PersistentInstance');
-            $sizeProperty->PropertyClass = $widgetClasses['TextBlock'][0];
-            $class->LoadedProperties[] = $sizeProperty;
+    $variable('SSOverlayRadarRangeText', 'TextBlock');
+    $sizeText = $text('SSOverlayRadarSizeText', 'Size: 125%');
+    $asset->Exports[$sizeText - 1]->Data[] = OverlayProperty('Bool', 'bIsVariable', 1);
+    $variable('SSOverlayRadarSizeText', 'TextBlock');
+    $choiceRows = [];
+    foreach (['Range' => ['50 m', '100 m', '200 m', '400 m'], 'Size' => ['100%', '125%', '150%']] as $kind => $labels) {
+        $choiceRow = $appendWidget('HorizontalBox', 'SSOverlayRadar' . $kind . 'Choices', $treeIndex);
+        $choiceSlots = [];
+        foreach ($labels as $choice => $label) {
+            $buttonName = 'SSOverlayRadar' . $kind . $choice;
+            $buttonIndex = $appendWidget('Button', $buttonName, $treeIndex, [OverlayProperty('Bool', 'bIsVariable', 1), $gameButton()]);
+            $stack = $appendWidget('VerticalBox', $buttonName . '_Stack', $treeIndex, [FilterArray('Slots', [])]);
+            $addRowTo($stack, $text($buttonName . '_Text', $label, 13, [FilterEnum('Justification', 'ETextJustify', 'Center')], false), 0);
+            $mark = $appendWidget('Border', $buttonName . '_Mark', $treeIndex, [OverlayProperty('Bool', 'bIsVariable', 1), $color('BrushColor', 0.86, 0.71, 0.39, 1),
+                $margin('Padding', 0, 1, 0, 1), FilterEnum('Visibility', 'ESlateVisibility', $choice === 1 ? 'Visible' : 'Hidden')]);
+            $addRowTo($stack, $mark, 1);
+            $content = $appendWidget('ButtonSlot', $buttonName . '_Content', $buttonIndex, [OverlayProperty('Object', 'Parent', $buttonIndex), OverlayProperty('Object', 'Content', $stack), $margin('Padding', 4, 3, 4, 2)]);
+            $asset->Exports[$buttonIndex - 1]->Data[] = FilterArray('Slots', [$content]);
+            $asset->Exports[$stack - 1]->Data[] = OverlayProperty('Object', 'Slot', $content);
+            $slot = $appendWidget('HorizontalBoxSlot', $buttonName . '_RowSlot', $choiceRow, [OverlayProperty('Object', 'Parent', $choiceRow), OverlayProperty('Object', 'Content', $buttonIndex),
+                FilterStruct('Padding', 'Margin', [OverlayProperty('Float', 'Right', 3)]), FilterStruct('Size', 'SlateChildSize', [OverlayProperty('Float', 'Value', 1), FilterEnum('SizeRule', 'ESlateSizeRule', 'Fill')])]);
+            $asset->Exports[$buttonIndex - 1]->Data[] = OverlayProperty('Object', 'Slot', $slot);
+            $choiceSlots[] = $slot;
+            $variable($buttonName, 'Button');
+            $variable($buttonName . '_Mark', 'Border');
+            $buttons[] = $buttonName;
+            $handlerName = 'SSOverlaySetRadar' . $kind . $choice;
+            $handlerIndex = count($asset->Exports) + 1;
+            $hl = static fn(string $n): object => FilterVariable($handlerIndex, $n);
+            $addFunction($handlerName, [FilterField($intTemplate, 'Zoom'), FilterField($intTemplate, 'Size')], FilterCompileCode([
+                FilterCall($syncRadarIndex, [], 'LocalFinalFunction'),
+                FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Done', 'BooleanExpression' => FilterCall($native['IsValid'], [FilterVariable($classIndex, 'SSOverlayRadarState', true)])]),
+                FilterExpr('Let', ['Value' => FilterPointer($handlerIndex, 'Zoom'), 'Variable' => $hl('Zoom'), 'Expression' => $kind === 'Range' ? FilterExpr('IntConst', ['Value' => $choice]) : FilterVariable($classIndex, 'SSOverlayRadarZoomIndex', true)]),
+                FilterExpr('Let', ['Value' => FilterPointer($handlerIndex, 'Size'), 'Variable' => $hl('Size'), 'Expression' => $kind === 'Size' ? FilterExpr('IntConst', ['Value' => $choice]) : FilterVariable($classIndex, 'SSOverlayRadarSizeIndex', true)]),
+                FilterRadarMethod($classIndex, 'SSRadarSetView', [$hl('Zoom'), $hl('Size')]),
+                FilterCall($syncRadarIndex, [], 'LocalFinalFunction'), ['label' => 'Done'], ...FilterReturn(),
+            ]));
+            $bindClick($buttonName, $handlerName);
         }
-        $content = $appendWidget('ButtonSlot', $buttonName . '_Content', $buttonIndex, [OverlayProperty('Object', 'Parent', $buttonIndex), OverlayProperty('Object', 'Content', $buttonText),
-            FilterStruct('Padding', 'Margin', [OverlayProperty('Float', 'Left', 6), OverlayProperty('Float', 'Right', 6), OverlayProperty('Float', 'Top', 2), OverlayProperty('Float', 'Bottom', 2)])]);
-        $asset->Exports[$buttonIndex - 1]->Data[] = FilterArray('Slots', [$content]);
-        $asset->Exports[$buttonText - 1]->Data[] = OverlayProperty('Object', 'Slot', $content);
-        $slot = $appendWidget('HorizontalBoxSlot', $buttonName . '_RowSlot', $viewRow, [OverlayProperty('Object', 'Parent', $viewRow), OverlayProperty('Object', 'Content', $buttonIndex),
-            FilterStruct('Padding', 'Margin', [OverlayProperty('Float', 'Right', 4)])]);
-        $asset->Exports[$buttonIndex - 1]->Data[] = OverlayProperty('Object', 'Slot', $slot);
-        $viewSlots[] = $slot;
-        $buttonProperty = FilterField($objectTemplate, $buttonName, 'CPF_BlueprintVisible, CPF_ExportObject, CPF_InstancedReference, CPF_RepSkip, CPF_PersistentInstance');
-        $buttonProperty->PropertyClass = $widgetClasses['Button'][0];
-        $class->LoadedProperties[] = $buttonProperty;
-        $buttons[] = $buttonName;
-        $handlerName = 'SSOverlayRadar' . ($action === 'RadarSize' ? 'CycleSize' : $action);
-        $handlerIndex = count($asset->Exports) + 1;
-        $asset->Exports[] = FilterFunction($functionTemplate, $handlerIndex, $classIndex, $handlerName, [], FilterCompileCode([
-            FilterCall($syncRadarIndex, [], 'LocalFinalFunction'),
-            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Done', 'BooleanExpression' => FilterCall($native['IsValid'], [FilterVariable($classIndex, 'SSOverlayRadarState', true)])]),
-            FilterRadarMethod($classIndex, $methodName, $delta === null ? [] : [FilterExpr('IntConst', ['Value' => $delta])]),
-            FilterCall($syncRadarIndex, [], 'LocalFinalFunction'), ['label' => 'Done'], ...FilterReturn(),
-        ]));
-        $functions[] = $handlerName;
-        $class->FuncMap[] = [$handlerName, $handlerIndex];
-        array_unshift($class->Children, $handlerIndex);
-        $delegateBindings->Value[] = FilterStruct('ComponentDelegateBindings', 'BlueprintComponentDelegateBinding', [
-            OverlayProperty('Name', 'ComponentPropertyName', $buttonName), OverlayProperty('Name', 'DelegatePropertyName', 'OnClicked'), OverlayProperty('Name', 'FunctionNameToBind', $handlerName),
-        ]);
+        $asset->Exports[$choiceRow - 1]->Data = [FilterArray('Slots', $choiceSlots)];
+        $choiceRows[$kind] = $choiceRow;
     }
-    $asset->Exports[$viewRow - 1]->Data = [FilterArray('Slots', $viewSlots)];
-    $addRow($viewRow);
-    $hintFont = unserialize(serialize($font));
-    foreach ($hintFont->Value as $field) { if ($field->Name === 'Size') { $field->Value = 12; } }
-    $addRow($appendWidget('TextBlock', 'SSOverlayRadarKeys', $treeIndex, [OverlayText('Text', 'F8 toggle | F3/F4 zoom | F10 size'), $hintFont, OverlayProperty('Bool', 'AutoWrapText', 1)]));
-    $setIsChecked = OverlayImport($asset, 'SetIsChecked', $widgetClasses['CheckBox'][0], '/Script/CoreUObject', 'Function');
-    $voidPointer = (object)['$type' => 'UAssetAPI.Kismet.Bytecode.KismetPropertyPointer, UAssetAPI', 'New' => (object)[
-        '$type' => 'UAssetAPI.UnrealTypes.FFieldPath, UAssetAPI', 'Path' => [], 'ResolvedOwner' => 0,
-    ]];
+    $hint = $text('SSOverlayRadarKeys', "Keys\nF8   show / hide radar\nF3 / F4   zoom in / out\nF10   cycle size", 13);
+    $setIsChecked = $native['SetIsChecked'];
     $clearIndex = count($asset->Exports) + 1;
     $clearCode = [FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlayBatch', true), 'AssignmentExpression' => FilterExpr('True')]),
-        FilterExpr('Let', ['Value' => FilterPointer($classIndex, 'SSOverlaySelectedTag'), 'Variable' => FilterVariable($classIndex, 'SSOverlaySelectedTag', true), 'Expression' => FilterExpr('NameConst', ['Value' => 'None'])])];
+    ];
     foreach ($filters as $filter) {
         if ($filter['group'] !== 'type') { continue; }
         $clearCode[] = FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, $filter['state'], true), 'AssignmentExpression' => FilterExpr('False')]);
         $clearCode[] = FilterContext(FilterVariable($classIndex, 'SSOverlayCheck_type_' . $filter['key'], true), FilterCall($setIsChecked, [FilterExpr('False')], 'FinalFunction'), $voidPointer);
     }
     $clearCode[] = FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlayBatch', true), 'AssignmentExpression' => FilterExpr('False')]);
-    $asset->Exports[] = FilterFunction($functionTemplate, $clearIndex, $classIndex, 'SSOverlayClearTypes', [], [...$clearCode, ...FilterReturn()]);
-    $functions[] = 'SSOverlayClearTypes';
-    $class->FuncMap[] = ['SSOverlayClearTypes', $clearIndex];
-    array_unshift($class->Children, $clearIndex);
+    $addFunction('SSOverlayClearTypes', [], [...$clearCode, ...FilterReturn()]);
     foreach ($filters as $filter) {
         $checkboxName = 'SSOverlayCheck_' . $filter['group'] . '_' . $filter['key'];
-        $checkbox = $appendWidget('CheckBox', $checkboxName, $treeIndex, [FilterEnum('CheckedState', 'ECheckBoxState', $filter['default'] ? 'Checked' : 'Unchecked'), OverlayProperty('Bool', 'bIsVariable', 1)]);
+        $isSwitch = $filter['group'] !== 'type';
+        $checkbox = $appendWidget('CheckBox', $checkboxName, $treeIndex, [FilterEnum('CheckedState', 'ECheckBoxState', $filter['default'] ? 'Checked' : 'Unchecked'), OverlayProperty('Bool', 'bIsVariable', 1), $isSwitch ? $toggleStyle() : $checkStyle(),
+            ...($isSwitch ? [] : [FilterEnum('HorizontalAlignment', 'EHorizontalAlignment', 'HAlign_Fill')])]);
         $checkboxes[] = $checkboxName;
         $label = $text($checkboxName . '_Text', $filter['label']);
         $content = $label;
@@ -641,24 +893,39 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
             $iconPackage = OverlayImport($asset, $package, 0, '/Script/CoreUObject', 'Package');
             $iconTexture = OverlayImport($asset, $iconName, $iconPackage, '/Script/Engine', 'Texture2D');
             $row = $appendWidget('HorizontalBox', $checkboxName . '_Row', $treeIndex);
-            $icon = $appendWidget('Image', $checkboxName . '_Icon', $treeIndex, [FilterStruct('Brush', 'SlateBrush', [FilterVector('ImageSize', 36, 36), OverlayProperty('Object', 'ResourceObject', $iconTexture)])]);
+            $icon = $appendWidget('Image', $checkboxName . '_Icon', $treeIndex, [FilterStruct('Brush', 'SlateBrush', [FilterVector('ImageSize', 28, 28), OverlayProperty('Object', 'ResourceObject', $iconTexture)])]);
+            $count = $text('SSOverlayCount_' . $filter['key'], '', 13, [FilterEnum('Justification', 'ETextJustify', 'Right'), OverlayProperty('Bool', 'bIsVariable', 1)], false);
+            $variable('SSOverlayCount_' . $filter['key'], 'TextBlock');
             $slots = [];
-            foreach ([$icon, $label] as $child) {
+            foreach ([$icon, $label, $count] as $child) {
                 $slot = $appendWidget('HorizontalBoxSlot', $checkboxName . '_RowSlot_' . $child, $row, [OverlayProperty('Object', 'Parent', $row), OverlayProperty('Object', 'Content', $child),
-                    FilterEnum('VerticalAlignment', 'EVerticalAlignment', 'VAlign_Center'), FilterStruct('Padding', 'Margin', [OverlayProperty('Float', 'Right', 8)])]);
+                    FilterEnum('VerticalAlignment', 'EVerticalAlignment', 'VAlign_Center'), FilterStruct('Padding', 'Margin', [OverlayProperty('Float', 'Right', 8)]),
+                    ...($child === $label ? [FilterStruct('Size', 'SlateChildSize', [OverlayProperty('Float', 'Value', 1), FilterEnum('SizeRule', 'ESlateSizeRule', 'Fill')])] : [])]);
                 $slots[] = $slot;
                 $asset->Exports[$child - 1]->Data[] = OverlayProperty('Object', 'Slot', $slot);
             }
             $asset->Exports[$row - 1]->Data = [FilterArray('Slots', $slots)];
             $content = $row;
         }
-        $contentSlot = $appendWidget('PanelSlot', $checkboxName . '_Content', $checkbox, [OverlayProperty('Object', 'Parent', $checkbox), OverlayProperty('Object', 'Content', $content)]);
-        $asset->Exports[$checkbox - 1]->Data[] = FilterArray('Slots', [$contentSlot]);
-        $asset->Exports[$content - 1]->Data[] = OverlayProperty('Object', 'Slot', $contentSlot);
-        $addRow($checkbox);
-        $checkboxProperty = FilterField($objectTemplate, $checkboxName, 'CPF_BlueprintVisible, CPF_ExportObject, CPF_InstancedReference, CPF_RepSkip, CPF_PersistentInstance');
-        $checkboxProperty->PropertyClass = $widgetClasses['CheckBox'][0];
-        $class->LoadedProperties[] = $checkboxProperty;
+        $placed = $checkbox;
+        if ($isSwitch) {
+            // Settings read as "Label .......... [switch]".
+            $placed = $appendWidget('HorizontalBox', $checkboxName . '_Row', $treeIndex);
+            $slots = [];
+            foreach ([$label, $checkbox] as $child) {
+                $slots[] = $slot = $appendWidget('HorizontalBoxSlot', $checkboxName . '_RowSlot_' . $child, $placed, [OverlayProperty('Object', 'Parent', $placed), OverlayProperty('Object', 'Content', $child),
+                    FilterEnum('VerticalAlignment', 'EVerticalAlignment', 'VAlign_Center'),
+                    ...($child === $label ? [FilterStruct('Size', 'SlateChildSize', [OverlayProperty('Float', 'Value', 1), FilterEnum('SizeRule', 'ESlateSizeRule', 'Fill')])] : [])]);
+                $asset->Exports[$child - 1]->Data[] = OverlayProperty('Object', 'Slot', $slot);
+            }
+            $asset->Exports[$placed - 1]->Data = [FilterArray('Slots', $slots)];
+        } else {
+            $contentSlot = $appendWidget('PanelSlot', $checkboxName . '_Content', $checkbox, [OverlayProperty('Object', 'Parent', $checkbox), OverlayProperty('Object', 'Content', $content)]);
+            $asset->Exports[$checkbox - 1]->Data[] = FilterArray('Slots', [$contentSlot]);
+            $asset->Exports[$content - 1]->Data[] = OverlayProperty('Object', 'Slot', $contentSlot);
+        }
+        if ($filter['group'] === 'radar') { $addRadarRow($placed); } elseif ($filter['group'] === 'source' || $filter['group'] === 'view') { $addLayoutRow($placed, 2, 2); } else { $addRow($placed); }
+        $variable($checkboxName, 'CheckBox');
         $handlerIndex = count($asset->Exports) + 1;
         $handlerName = 'SSOverlayChanged_' . $filter['group'] . '_' . $filter['key'];
         $parameter = FilterField($boolTemplate, 'bIsChecked', 'CPF_Parm');
@@ -666,81 +933,220 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         $code = [FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Change', 'BooleanExpression' => FilterVariable($classIndex, 'SSOverlayBatch', true)]), FilterExpr('Return', ['ReturnExpression' => FilterExpr('Nothing')]), ['label' => 'Change'],
             FilterCall($syncRadarIndex, [], 'LocalFinalFunction')];
         if ($filter['group'] === 'type') {
-            $code[] = FilterCall($clearIndex, [], 'LocalFinalFunction');
-            $code[] = FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Refresh', 'BooleanExpression' => FilterVariable($handlerIndex, 'bIsChecked')]);
+            // Types toggle independently; the radar receives the combined mask on Refresh.
             $code[] = $write;
-            $code[] = FilterExpr('Let', ['Value' => FilterPointer($classIndex, 'SSOverlaySelectedTag'), 'Variable' => FilterVariable($classIndex, 'SSOverlaySelectedTag', true), 'Expression' => FilterExpr('NameConst', ['Value' => $filter['tag']])]);
-            $code[] = FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlayBatch', true), 'AssignmentExpression' => FilterExpr('True')]);
-            $code[] = FilterContext(FilterVariable($classIndex, $checkboxName, true), FilterCall($setIsChecked, [FilterExpr('True')], 'FinalFunction'), $voidPointer);
-            $code[] = FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlayBatch', true), 'AssignmentExpression' => FilterExpr('False')]);
         } else {
             $code[] = $write;
             // Commit the explicit checkbox choice before Refresh pulls hotkey state.
             if ($filter['group'] === 'radar') { $code[] = FilterCall($publishRadarIndex, [], 'LocalFinalFunction'); }
         }
-        $handler = FilterFunction($functionTemplate, $handlerIndex, $classIndex, $handlerName, [$parameter], FilterCompileCode([
+        $addFunction($handlerName, [$parameter], FilterCompileCode([
             ...$code, ['label' => 'Refresh'], FilterCall($refreshIndex, [], 'LocalFinalFunction'), ...FilterReturn(),
         ]));
-        $asset->Exports[] = $handler;
-        $functions[] = $handlerName;
-        $class->FuncMap[] = [$handlerName, $handlerIndex];
-        array_unshift($class->Children, $handlerIndex);
         $delegateBindings->Value[] = FilterStruct('ComponentDelegateBindings', 'BlueprintComponentDelegateBinding', [
             OverlayProperty('Name', 'ComponentPropertyName', $checkboxName), OverlayProperty('Name', 'DelegatePropertyName', 'OnCheckStateChanged'),
             OverlayProperty('Name', 'FunctionNameToBind', $handlerName),
         ]);
+        if ($filter['group'] === 'radar') {
+            // Radar tab order: switch, range, zoom/size buttons, key hint.
+            $addRadarRow($rangeText);
+            $addRadarRow($choiceRows['Range']);
+            $addRadarRow($sizeText);
+            $addRadarRow($choiceRows['Size']);
+            $addRadarRow($hint);
+        }
     }
     foreach (['None' => false] as $action => $enabled) {
         $name = 'SSOverlayTypes' . $action;
-        $index = count($asset->Exports) + 1;
-        $code = [FilterCall($syncRadarIndex, [], 'LocalFinalFunction'), FilterCall($clearIndex, [], 'LocalFinalFunction')];
-        $code[] = FilterCall($refreshIndex, [], 'LocalFinalFunction');
-        $asset->Exports[] = FilterFunction($functionTemplate, $index, $classIndex, $name, [], [...$code, ...FilterReturn()]);
-        $functions[] = $name;
-        $class->FuncMap[] = [$name, $index];
-        array_unshift($class->Children, $index);
-        $delegateBindings->Value[] = FilterStruct('ComponentDelegateBindings', 'BlueprintComponentDelegateBinding', [
-            OverlayProperty('Name', 'ComponentPropertyName', 'SSOverlayButton' . $action), OverlayProperty('Name', 'DelegatePropertyName', 'OnClicked'), OverlayProperty('Name', 'FunctionNameToBind', $name),
-        ]);
+        $addFunction($name, [], [FilterCall($syncRadarIndex, [], 'LocalFinalFunction'), FilterCall($clearIndex, [], 'LocalFinalFunction'),
+            FilterCall($refreshIndex, [], 'LocalFinalFunction'), ...FilterReturn()]);
+        $bindClick('SSOverlayButton' . $action, $name);
     }
-    $headerName = 'SSOverlayShowFilters';
-    $header = $appendWidget('CheckBox', $headerName, $treeIndex, [FilterEnum('CheckedState', 'ECheckBoxState', 'Unchecked'), OverlayProperty('Bool', 'bIsVariable', 1)]);
-    $headerText = $text('SSOverlayShowFiltersText', 'Puzzle filters');
-    $headerContent = $appendWidget('PanelSlot', 'SSOverlayShowFiltersContent', $header, [OverlayProperty('Object', 'Parent', $header), OverlayProperty('Object', 'Content', $headerText)]);
-    $headerSlot = $appendWidget('CanvasPanelSlot', 'SSOverlayShowFiltersSlot', $rootIndex, [
-        FilterStruct('LayoutData', 'AnchorData', [FilterStruct('Offsets', 'Margin', [
-            OverlayProperty('Float', 'Left', 24), OverlayProperty('Float', 'Top', -90), OverlayProperty('Float', 'Right', 280), OverlayProperty('Float', 'Bottom', 30),
-        ]), FilterStruct('Anchors', 'Anchors', [FilterVector('Minimum', 0, 1), FilterVector('Maximum', 0, 1)]), FilterVector('Alignment', 0, 1)]), OverlayProperty('Int', 'ZOrder', 201), OverlayProperty('Object', 'Parent', $rootIndex), OverlayProperty('Object', 'Content', $header),
-    ]);
-    $asset->Exports[$header - 1]->Data[] = FilterArray('Slots', [$headerContent]);
-    $asset->Exports[$header - 1]->Data[] = OverlayProperty('Object', 'Slot', $headerSlot);
-    $asset->Exports[$headerText - 1]->Data[] = OverlayProperty('Object', 'Slot', $headerContent);
-    foreach ($root->Data as $field) { if ($field->Name === 'Slots') { $field->Value[] = OverlayProperty('Object', '0', $headerSlot); } }
-    $root->CreateBeforeSerializationDependencies[] = $headerSlot;
-    foreach ([$headerName => 'CheckBox', 'SSOverlayPanel' => 'Border'] as $propertyName => $type) {
-        $property = FilterField($objectTemplate, $propertyName, 'CPF_BlueprintVisible, CPF_ExportObject, CPF_InstancedReference, CPF_RepSkip, CPF_PersistentInstance');
-        $property->PropertyClass = $widgetClasses[$type][0];
-        $class->LoadedProperties[] = $property;
+    // Rows follow the map's selected zone: only types with fixed or eligible Hub puzzles there are listed.
+    $zonePresence = [];
+    foreach ((array)($document->markers ?? []) as $marker) {
+        $zone = $marker->zoneIndex ?? null;
+        $eligible = ($marker->group ?? '') === 'static' || (($marker->group ?? '') === 'hub' && ($marker->hubAvailabilityZone ?? 0) > 0);
+        if (is_int($zone) && $zone > 0 && $eligible && is_string($marker->ptype ?? null)) { $zonePresence[$marker->ptype][$zone] = true; }
     }
-    $checkboxes[] = $headerName;
-    $setVisibility = OverlayImport($asset, 'SetVisibility', OverlayImport($asset, 'Widget', $umg, '/Script/CoreUObject', 'Class'), '/Script/CoreUObject', 'Function');
-    $toggleName = 'SSOverlayTogglePanel';
-    $toggleIndex = count($asset->Exports) + 1;
-    $visible = FilterContext(FilterVariable($classIndex, 'SSOverlayPanel', true), FilterCall($setVisibility, [FilterExpr('ByteConst', ['Value' => 0])], 'FinalFunction'), $voidPointer);
-    $collapsed = FilterContext(FilterVariable($classIndex, 'SSOverlayPanel', true), FilterCall($setVisibility, [FilterExpr('ByteConst', ['Value' => 1])], 'FinalFunction'), $voidPointer);
-    $branch = FilterExpr('JumpIfNot', ['CodeOffset' => 0, 'BooleanExpression' => FilterVariable($toggleIndex, 'bIsChecked')]);
-    $done = FilterExpr('Jump', ['CodeOffset' => 0]);
-    $syncCall = FilterCall($syncRadarIndex, [], 'LocalFinalFunction');
-    $branch->CodeOffset = FilterExprSize($syncCall) + FilterExprSize($branch) + FilterExprSize($visible) + FilterExprSize($done);
-    $done->CodeOffset = $branch->CodeOffset + FilterExprSize($collapsed);
-    $asset->Exports[] = FilterFunction($functionTemplate, $toggleIndex, $classIndex, $toggleName,
-        [FilterField($boolTemplate, 'bIsChecked', 'CPF_Parm')], [$syncCall, $branch, $visible, $done, $collapsed, ...FilterReturn()]);
-    $functions[] = $toggleName;
-    $class->FuncMap[] = [$toggleName, $toggleIndex];
-    array_unshift($class->Children, $toggleIndex);
-    $delegateBindings->Value[] = FilterStruct('ComponentDelegateBindings', 'BlueprintComponentDelegateBinding', [
-        OverlayProperty('Name', 'ComponentPropertyName', $headerName), OverlayProperty('Name', 'DelegatePropertyName', 'OnCheckStateChanged'), OverlayProperty('Name', 'FunctionNameToBind', $toggleName),
-    ]);
+    // Possible sites list a type in zones without a located puzzle, but only while sites are shown.
+    $sitePresence = [];
+    foreach ((array)($document->spawnSites ?? []) as $site) {
+        $zone = $site->zoneIndex ?? null;
+        if (!is_int($zone) || $zone <= 0) { continue; }
+        foreach ((array)($site->allowedTypes ?? []) as $type) { if (is_string($type) && !isset($zonePresence[$type][$zone])) { $sitePresence[$type][$zone] = true; } }
+    }
+    $zoneFunction = count($asset->Exports) + 1;
+    $zl = static fn(string $name): object => FilterVariable($zoneFunction, $name);
+    $zlet = static fn(string $name, object $value): object => FilterExpr('Let', ['Value' => FilterPointer($zoneFunction, $name), 'Variable' => $zl($name), 'Expression' => $value]);
+    $zoneState = static fn(): object => FilterVariable($classIndex, 'SSOverlayZone', true);
+    $mapWidgetClass = OverlayImport($asset, 'LargeMapViewWidget', $game, '/Script/CoreUObject', 'Class');
+    $mapWidget = static fn(): object => FilterVariable($mapWidgetClass, 'Map', true);
+    $zoneCode = [
+        $zlet('NewZone', FilterExpr('IntConst', ['Value' => 0])),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Apply', 'BooleanExpression' => FilterCall($native['IsValid'], [$mapWidget()])]),
+        $zlet('ZoneIndex', FilterContext($mapWidget(), FilterCall($native['GetSelectedZoneIndex'], [], 'FinalFunction'), FilterPointer($zoneFunction, 'ZoneIndex'))),
+        $zlet('ZoneSource', FilterCall($native['GetZoneData'], [FilterExpr('Self')])),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Apply', 'BooleanExpression' => FilterCall($native['IsValid'], [$zl('ZoneSource')])]),
+        $zlet('ZoneEntry', FilterContext($zl('ZoneSource'), FilterCall($native['ZoneIndex_to_Zone'], [$zl('ZoneIndex')], 'FinalFunction'), FilterPointer($zoneFunction, 'ZoneEntry'))),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Apply', 'BooleanExpression' => FilterCall($native['IsValid'], [$zl('ZoneEntry')])]),
+        $zlet('NewZone', FilterCall($native['Conv_ByteToInt'], [FilterContext($zl('ZoneEntry'), FilterVariable($native['ZoneDataEntry'], 'NameEnum', true), FilterPointer($native['ZoneDataEntry'], 'NameEnum'))])),
+        $zlet('ZoneNameValue', FilterContext($zl('ZoneEntry'), FilterVariable($native['ZoneDataEntry'], 'Name', true), FilterPointer($native['ZoneDataEntry'], 'Name'))),
+        $zlet('ZoneNumber', FilterContext($zl('ZoneEntry'), FilterVariable($native['ZoneDataEntry'], 'DisplayIndex', true), FilterPointer($native['ZoneDataEntry'], 'DisplayIndex'))),
+        FilterExpr('Let', ['Value' => FilterPointer($classIndex, 'SSOverlayZoneLabel'), 'Variable' => FilterVariable($classIndex, 'SSOverlayZoneLabel', true),
+            'Expression' => FilterCall($native['Concat_StrStr'], [FilterCall($native['Conv_IntToString'], [$zl('ZoneNumber')]),
+                FilterCall($native['Concat_StrStr'], [FilterExpr('StringConst', ['Value' => '. ']), FilterCall($native['ToUpper'], [FilterCall($native['Conv_TextToString'], [$zl('ZoneNameValue')])])])])]),
+        ['label' => 'Apply'],
+        FilterExpr('LetBool', ['VariableExpression' => $zl('Changed'), 'AssignmentExpression' => FilterCall($native['NotEqual_IntInt'], [$zl('NewZone'), $zoneState()])]),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Rows', 'BooleanExpression' => $zl('Changed')]),
+        FilterExpr('Let', ['Value' => FilterPointer($classIndex, 'SSOverlayZone'), 'Variable' => $zoneState(), 'Expression' => $zl('NewZone')]),
+        // Old counts belong to the previous zone: force a redraw, which blanks them until the new pass publishes.
+        FilterExpr('Let', ['Value' => FilterPointer($classIndex, 'SSOverlayCountRevision'), 'Variable' => FilterVariable($classIndex, 'SSOverlayCountRevision', true), 'Expression' => FilterExpr('IntConst', ['Value' => -1])]),
+        // Rows are re-evaluated every call, so Clear also hides selected rows from other zones.
+        ['label' => 'Rows'],
+    ];
+    // Never pass an object-context call straight into a by-reference native parameter: the engine
+    // then reads the context object's property address instead of the call result. Store it first.
+    $zoneCode[] = $zlet('SearchValue', FilterContext(FilterVariable($classIndex, 'SSOverlaySearch', true),
+        FilterCall($native['GetTextBox'], [], 'FinalFunction'), FilterPointer($zoneFunction, 'SearchValue')));
+    $zoneCode[] = $zlet('SearchText', FilterCall($native['Conv_TextToString'], [$zl('SearchValue')]));
+    $zoneRadar = static fn(string $name): object => FilterContext(FilterVariable($classIndex, 'SSOverlayRadarState', true), FilterVariable($native['RadarClass'], $name, true), FilterPointer($native['RadarClass'], $name));
+    array_push($zoneCode,
+        FilterExpr('LetBool', ['VariableExpression' => $zl('CountsValid'), 'AssignmentExpression' => FilterExpr('False')]),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'CountsReady', 'BooleanExpression' => FilterCall($native['IsValid'], [FilterVariable($classIndex, 'SSOverlayRadarState', true)])]),
+        $zlet('Left', $zoneRadar('SSRadarCountLeft')), $zlet('Total', $zoneRadar('SSRadarCountTotal')), $zlet('CountZone', $zoneRadar('SSRadarCountZone')),
+        FilterExpr('LetBool', ['VariableExpression' => $zl('CountsValid'), 'AssignmentExpression' => FilterCall($native['BooleanAND'], [
+            FilterCall($native['EqualEqual_IntInt'], [$zl('CountZone'), $zoneState()]), FilterCall($native['Greater_IntInt'], [FilterCall($native['Array_Length'], [$zl('Total')]), FilterExpr('IntConst', ['Value' => 30])])])]),
+        ['label' => 'CountsReady']);
+    foreach ($typeFilters as $filter) {
+        // Unknown zone (0) lists every type.
+        $slot = OverlayCatalogSlot($filter['key']);
+        array_push($zoneCode,
+            FilterExpr('LetBool', ['VariableExpression' => $zl('Done'), 'AssignmentExpression' => FilterExpr('False')]),
+            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'DoneReady_' . $filter['key'], 'BooleanExpression' => FilterCall($native['BooleanAND'], [FilterVariable($classIndex, 'SSOverlayView_hideDone', true), $zl('CountsValid')])]),
+            FilterCall($native['Array_Get'], [$zl('Total'), FilterExpr('IntConst', ['Value' => $slot]), $zl('TotalCount')]),
+            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'DoneReady_' . $filter['key'], 'BooleanExpression' => FilterCall($native['Greater_IntInt'], [$zl('TotalCount'), FilterExpr('IntConst', ['Value' => 0])])]),
+            FilterCall($native['Array_Get'], [$zl('Left'), FilterExpr('IntConst', ['Value' => $slot]), $zl('LeftCount')]),
+            FilterExpr('LetBool', ['VariableExpression' => $zl('Done'), 'AssignmentExpression' => FilterCall($native['EqualEqual_IntInt'], [$zl('LeftCount'), FilterExpr('IntConst', ['Value' => 0])])]),
+            ['label' => 'DoneReady_' . $filter['key']]);
+        // Unknown zone (0) lists every type.
+        $present = FilterCall($native['EqualEqual_IntInt'], [$zoneState(), FilterExpr('IntConst', ['Value' => 0])]);
+        foreach (array_keys($zonePresence[$filter['key']] ?? []) as $zone) {
+            $present = FilterCall($native['BooleanOR'], [$present, FilterCall($native['EqualEqual_IntInt'], [$zoneState(), FilterExpr('IntConst', ['Value' => $zone])])]);
+        }
+        $sites = null;
+        foreach (array_keys($sitePresence[$filter['key']] ?? []) as $zone) {
+            $match = FilterCall($native['EqualEqual_IntInt'], [$zoneState(), FilterExpr('IntConst', ['Value' => $zone])]);
+            $sites = $sites === null ? $match : FilterCall($native['BooleanOR'], [$sites, $match]);
+        }
+        if ($sites !== null) { $present = FilterCall($native['BooleanOR'], [$present, FilterCall($native['BooleanAND'], [FilterVariable($classIndex, 'SSOverlaySource_spawn', true), $sites])]); }
+        $matches = FilterCall($native['BooleanOR'], [FilterCall($native['EqualEqual_IntInt'], [FilterCall($native['Len'], [$zl('SearchText')]), FilterExpr('IntConst', ['Value' => 0])]),
+            FilterCall($native['Contains'], [FilterExpr('StringConst', ['Value' => $filter['label']]), $zl('SearchText'), FilterExpr('False'), FilterExpr('False')])]);
+        // A selected type stays listed so it can always be unticked; completed types can be hidden.
+        $present = FilterCall($native['BooleanOR'], [FilterVariable($classIndex, $filter['state'], true),
+            FilterCall($native['BooleanAND'], [$matches, FilterCall($native['BooleanAND'], [$present, FilterCall($native['Not_PreBool'], [$zl('Done')])])])]);
+        $row = 'SSOverlayCheck_type_' . $filter['key'];
+        array_push($zoneCode,
+            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Hide_' . $filter['key'], 'BooleanExpression' => $present]),
+            $show($row, 0), FilterExpr('Jump', ['CodeOffset' => 0, '__target' => 'Next_' . $filter['key']]),
+            ['label' => 'Hide_' . $filter['key']], $show($row, 1), ['label' => 'Next_' . $filter['key']]);
+    }
+    $zoneLocals = [FilterField($intTemplate, 'ZoneIndex'), FilterField($intTemplate, 'NewZone'), FilterField($boolTemplate, 'Changed'), FilterField($intTemplate, 'ZoneNumber'),
+        FilterField($intTemplate, 'CountZone'), FilterField($intTemplate, 'TotalCount'), FilterField($intTemplate, 'LeftCount'), FilterField($boolTemplate, 'CountsValid'), FilterField($boolTemplate, 'Done')];
+    foreach (['Left', 'Total'] as $name) {
+        $field = FilterField($arrayTemplate, $name);
+        $field->Inner = FilterField($intTemplate, $name);
+        $zoneLocals[] = $field;
+    }
+    foreach (['SearchText' => ['StrProperty', 16], 'SearchValue' => ['TextProperty', 24], 'ZoneNameValue' => ['TextProperty', 24]] as $name => [$type, $size]) {
+        $field = FilterField($intTemplate, $name);
+        $field->SerializedType = $type;
+        $field->ElementSize = $size;
+        $zoneLocals[] = $field;
+    }
+    foreach (['ZoneSource' => 'ZoneData', 'ZoneEntry' => 'ZoneDataEntry'] as $name => $type) {
+        $field = FilterField($objectTemplate, $name);
+        $field->PropertyClass = $native[$type];
+        $zoneLocals[] = $field;
+    }
+    $addFunction('SSOverlayRefreshZone', $zoneLocals, FilterCompileCode([...$zoneCode,
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Done', 'BooleanExpression' => $zl('Changed')]),
+        FilterCall($refreshIndex, [], 'LocalFinalFunction'), ['label' => 'Done'], ...FilterReturn()]));
+    // Per-zone counts are computed by the long-lived radar (fixed puzzles plus live Hub puzzles)
+    // and shown as "solved / total"; the map only requests and displays them.
+    $countsFunction = count($asset->Exports) + 1;
+    $cl = static fn(string $name): object => FilterVariable($countsFunction, $name);
+    $clet = static fn(string $name, object $value): object => FilterExpr('Let', ['Value' => FilterPointer($countsFunction, $name), 'Variable' => $cl($name), 'Expression' => $value]);
+    $radarField = static fn(string $name): object => FilterContext(FilterVariable($classIndex, 'SSOverlayRadarState', true), FilterVariable($native['RadarClass'], $name, true), FilterPointer($native['RadarClass'], $name));
+    $countsCode = [
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Done', 'BooleanExpression' => FilterCall($native['IsValid'], [FilterVariable($classIndex, 'SSOverlayRadarState', true)])]),
+        $clet('Zone', FilterVariable($classIndex, 'SSOverlayZone', true)),
+        FilterRadarMethod($classIndex, 'SSRadarRequestCounts', [$cl('Zone')]),
+        $clet('Revision', $radarField('SSRadarCountRevision')),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Done', 'BooleanExpression' => FilterCall($native['NotEqual_IntInt'], [$cl('Revision'), FilterVariable($classIndex, 'SSOverlayCountRevision', true)])]),
+        FilterExpr('Let', ['Value' => FilterPointer($classIndex, 'SSOverlayCountRevision'), 'Variable' => FilterVariable($classIndex, 'SSOverlayCountRevision', true), 'Expression' => $cl('Revision')]),
+        $clet('Left', $radarField('SSRadarCountLeft')),
+        $clet('Total', $radarField('SSRadarCountTotal')),
+        $clet('CountZone', $radarField('SSRadarCountZone')),
+        $clet('LeftSum', FilterExpr('IntConst', ['Value' => 0])),
+    ];
+    foreach ($typeFilters as $filter) {
+        $k = $filter['key'];
+        $slot = OverlayCatalogSlot($k);
+        array_push($countsCode,
+            $clet('Label', FilterExpr('StringConst', ['Value' => ''])),
+            // Counts for another zone (still being computed) stay blank.
+            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Show_' . $k, 'BooleanExpression' => FilterCall($native['EqualEqual_IntInt'], [$cl('CountZone'), $cl('Zone')])]),
+            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Show_' . $k, 'BooleanExpression' => FilterCall($native['Less_IntInt'], [FilterExpr('IntConst', ['Value' => $slot]), FilterCall($native['Array_Length'], [$cl('Total')])])]),
+            FilterCall($native['Array_Get'], [$cl('Left'), FilterExpr('IntConst', ['Value' => $slot]), $cl('LeftCount')]),
+            FilterCall($native['Array_Get'], [$cl('Total'), FilterExpr('IntConst', ['Value' => $slot]), $cl('TotalCount')]),
+            $clet('LeftSum', FilterCall($native['Add_IntInt'], [$cl('LeftSum'), $cl('LeftCount')])),
+            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Show_' . $k, 'BooleanExpression' => FilterCall($native['Greater_IntInt'], [$cl('TotalCount'), FilterExpr('IntConst', ['Value' => 0])])]),
+            $clet('Label', FilterExpr('StringConst', ['Value' => 'done'])),
+            FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Show_' . $k, 'BooleanExpression' => FilterCall($native['Greater_IntInt'], [$cl('LeftCount'), FilterExpr('IntConst', ['Value' => 0])])]),
+            $clet('Label', FilterCall($native['Concat_StrStr'], [FilterCall($native['Conv_IntToString'], [FilterCall($native['Subtract_IntInt'], [$cl('TotalCount'), $cl('LeftCount')])]),
+                FilterCall($native['Concat_StrStr'], [FilterExpr('StringConst', ['Value' => ' / ']), FilterCall($native['Conv_IntToString'], [$cl('TotalCount')])])])),
+            ['label' => 'Show_' . $k],
+            $clet('LabelText', FilterCall($native['Conv_StringToText'], [$cl('Label')])),
+            FilterContext(FilterVariable($classIndex, 'SSOverlayCount_' . $k, true), FilterCall($native['SetText'], [$cl('LabelText')], 'FinalFunction'), $voidPointer));
+    }
+    // Header: the selected zone's title (from RefreshZone), then progress.
+    $str = static fn(string $value): object => FilterExpr('StringConst', ['Value' => $value]);
+    $concat = static fn(object ...$parts): object => array_reduce(array_slice($parts, 1), static fn(object $carry, object $part): object => FilterCall($native['Concat_StrStr'], [$carry, $part]), $parts[0]);
+    array_push($countsCode,
+        $clet('Header', $str('Zone not detected')), $clet('Status', $str('Pins and counts need a selected zone')),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'HeaderReady', 'BooleanExpression' => FilterCall($native['Greater_IntInt'], [$cl('Zone'), FilterExpr('IntConst', ['Value' => 0])])]),
+        $clet('ZoneName', FilterVariable($classIndex, 'SSOverlayZoneLabel', true)),
+        $clet('Header', $cl('ZoneName')), $clet('Status', $str('Counting puzzles...')),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'HeaderZone', 'BooleanExpression' => FilterCall($native['EqualEqual_IntInt'], [$cl('CountZone'), $cl('Zone')])]),
+        $clet('Status', $concat(FilterCall($native['Conv_IntToString'], [$cl('LeftSum')]), $str(' left in this zone'))),
+        ['label' => 'HeaderZone'],
+        ['label' => 'HeaderReady'],
+        $clet('LabelText', FilterCall($native['Conv_StringToText'], [$cl('Header')])),
+        FilterContext(FilterVariable($classIndex, 'SSOverlayZoneHeader', true), FilterCall($native['SetText'], [$cl('LabelText')], 'FinalFunction'), $voidPointer),
+        $clet('LabelText', FilterCall($native['Conv_StringToText'], [$cl('Status')])),
+        FilterContext(FilterVariable($classIndex, 'SSOverlayZoneStatus', true), FilterCall($native['SetText'], [$cl('LabelText')], 'FinalFunction'), $voidPointer));
+    $countLocals = [FilterField($intTemplate, 'Zone'), FilterField($intTemplate, 'Revision'), FilterField($intTemplate, 'CountZone'), FilterField($intTemplate, 'LeftCount'), FilterField($intTemplate, 'TotalCount'), FilterField($intTemplate, 'LeftSum')];
+    foreach (['Header' => ['StrProperty', 16], 'Status' => ['StrProperty', 16], 'ZoneName' => ['StrProperty', 16]] as $name => [$type, $size]) {
+        $field = FilterField($intTemplate, $name);
+        $field->SerializedType = $type;
+        $field->ElementSize = $size;
+        $countLocals[] = $field;
+    }
+    foreach (['Left', 'Total'] as $name) {
+        $field = FilterField($arrayTemplate, $name);
+        $field->Inner = FilterField($intTemplate, $name);
+        $countLocals[] = $field;
+    }
+    $label = FilterField($intTemplate, 'Label');
+    $label->SerializedType = 'StrProperty';
+    $label->ElementSize = 16;
+    $countLocals[] = $label;
+    $labelText = FilterField($intTemplate, 'LabelText');
+    $labelText->SerializedType = 'TextProperty';
+    $labelText->ElementSize = 24;
+    $countLocals[] = $labelText;
+    $addFunction('SSOverlayRefreshCounts', $countLocals, FilterCompileCode([...$countsCode, ['label' => 'Done'], ...FilterReturn()]));
     if (isset($byName['OnInitialized'])) { throw new RuntimeException('The base map already implements OnInitialized; its lifecycle must be preserved explicitly.'); }
     $initializedIndex = count($asset->Exports) + 1;
     $userWidget = OverlayImport($asset, 'UserWidget', $umg, '/Script/CoreUObject', 'Class');
@@ -750,7 +1156,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $initializeCode = [
         FilterCall($syncRadarIndex, [], 'LocalFinalFunction'),
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Refresh', 'BooleanExpression' => FilterCall($native['IsValid'], [$radarState])]),
-        FilterExpr('Let', ['Value' => FilterPointer($classIndex, 'SSOverlaySelectedTag'), 'Variable' => FilterVariable($classIndex, 'SSOverlaySelectedTag', true), 'Expression' => $shared('SSRadarSelectedTag')]),
+        FilterExpr('Let', ['Value' => FilterPointer($initializedIndex, 'SelectedMask'), 'Variable' => FilterVariable($initializedIndex, 'SelectedMask'), 'Expression' => $shared('SSRadarSelectedMask')]),
         FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlaySource_spawn', true), 'AssignmentExpression' => $shared('SSRadarIncludeSites')]),
         FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlayRadarEnabled', true), 'AssignmentExpression' => $shared('SSRadarEnabled')]),
         FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlayBatch', true), 'AssignmentExpression' => FilterExpr('True')]),
@@ -758,16 +1164,16 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     foreach ($filters as $filter) {
         if ($filter['group'] === 'type') {
             $initializeCode[] = FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, $filter['state'], true),
-                'AssignmentExpression' => FilterCall($native['EqualEqual_NameName'], [FilterVariable($classIndex, 'SSOverlaySelectedTag', true), FilterExpr('NameConst', ['Value' => $filter['tag']])])]);
+                'AssignmentExpression' => FilterCall($native['NotEqual_IntInt'], [FilterCall($native['And_IntInt'], [FilterVariable($initializedIndex, 'SelectedMask'), FilterExpr('IntConst', ['Value' => OverlayTypeBit($filter['key'])])]), FilterExpr('IntConst', ['Value' => 0])])]);
         }
         $initializeCode[] = FilterExpr('LetBool', ['VariableExpression' => FilterVariable($initializedIndex, 'CheckValue'), 'AssignmentExpression' => FilterVariable($classIndex, $filter['state'], true)]);
         $initializeCode[] = FilterContext(FilterVariable($classIndex, 'SSOverlayCheck_' . $filter['group'] . '_' . $filter['key'], true),
             FilterCall($setIsChecked, [FilterVariable($initializedIndex, 'CheckValue')], 'FinalFunction'), $voidPointer);
     }
     $initializeCode[] = FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlayBatch', true), 'AssignmentExpression' => FilterExpr('False')]);
-    $initialized = FilterFunction($functionTemplate, $initializedIndex, $classIndex, 'OnInitialized', [FilterField($boolTemplate, 'CheckValue')], FilterCompileCode([
+    $initialized = FilterFunction($functionTemplate, $initializedIndex, $classIndex, 'OnInitialized', [FilterField($boolTemplate, 'CheckValue'), FilterField($intTemplate, 'SelectedMask')], FilterCompileCode([
         ...$initializeCode, ['label' => 'Refresh'], FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlayRadarInitialized', true), 'AssignmentExpression' => FilterExpr('True')]),
-        FilterCall($refreshIndex, [], 'LocalFinalFunction'), ...FilterReturn(),
+        FilterCall($zoneFunction, [], 'LocalFinalFunction'), FilterCall($refreshIndex, [], 'LocalFinalFunction'), ...FilterReturn(),
     ]));
     $initialized->FunctionFlags = 'FUNC_Event, FUNC_Protected, FUNC_BlueprintEvent';
     $initialized->SuperStruct = $initializedBase;
@@ -786,7 +1192,35 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $geometry->Struct = $geometryType;
     $geometry->ElementSize = 56;
     $elapsed = FilterVariable($classIndex, 'SSOverlayRadarSyncElapsed', true);
-    $tick = FilterFunction($functionTemplate, $tickIndex, $classIndex, 'Tick', [$geometry, FilterField($floatTemplate, 'InDeltaTime', 'CPF_BlueprintVisible, CPF_BlueprintReadOnly, CPF_Parm')], FilterCompileCode([
+    $tl = static fn(string $name): object => FilterVariable($tickIndex, $name);
+    $hoverOf = static fn(string $widget): object => FilterExpr('LetBool', ['VariableExpression' => $tl('Hovered'),
+        'AssignmentExpression' => FilterContext(FilterVariable($classIndex, $widget, true), FilterCall($native['IsHovered'], [], 'FinalFunction'), FilterPointer($tickIndex, 'Hovered'))]);
+    $tickMap = static fn(): object => FilterVariable(OverlayImport($asset, 'LargeMapViewWidget', $game, '/Script/CoreUObject', 'Class'), 'Map', true);
+    $hoverGuard = [FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'HoverDone', 'BooleanExpression' => FilterCall($native['IsValid'], [$tickMap()])]), $hoverOf('Legend_Panel')];
+    foreach (['SSOverlayBackdrop', 'SSOverlayPanel', 'SSOverlayRadarPanel', 'SSOverlayTabs'] as $widget) {
+        array_push($hoverGuard, FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'HoverNext_' . $widget, 'BooleanExpression' => FilterCall($native['Not_PreBool'], [$tl('Hovered')])]),
+            $hoverOf($widget), ['label' => 'HoverNext_' . $widget]);
+    }
+    array_push($hoverGuard,
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'HoverDone', 'BooleanExpression' => FilterCall($native['Not_PreBool'], [FilterCall($native['EqualEqual_BoolBool'], [$tl('Hovered'), FilterVariable($classIndex, 'SSOverlayMapBlocked', true)])])]),
+        FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlayMapBlocked', true), 'AssignmentExpression' => $tl('Hovered')]),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'HoverRelease', 'BooleanExpression' => $tl('Hovered')]),
+        FilterContext($tickMap(), FilterCall($native['DisableInteraction'], [], 'FinalFunction'), $voidPointer),
+        FilterExpr('Jump', ['CodeOffset' => 0, '__target' => 'HoverDone']), ['label' => 'HoverRelease'],
+        // The zone overview and fast-travel prompt disable the map themselves; never re-enable underneath them.
+        FilterExpr('LetBool', ['VariableExpression' => $tl('ExpandedVisible'), 'AssignmentExpression' => FilterContext(FilterVariable($classIndex, 'WBP_SandboxExpanded', true), FilterCall($native['IsVisible'], [], 'FinalFunction'), FilterPointer($tickIndex, 'ExpandedVisible'))]),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'HoverPrompt', 'BooleanExpression' => $tl('ExpandedVisible')]),
+        FilterExpr('Jump', ['CodeOffset' => 0, '__target' => 'HoverDone']), ['label' => 'HoverPrompt'],
+        FilterExpr('LetBool', ['VariableExpression' => $tl('ExpandedVisible'), 'AssignmentExpression' => FilterContext(FilterVariable($classIndex, 'FastTravelPrompt', true), FilterCall($native['IsVisible'], [], 'FinalFunction'), FilterPointer($tickIndex, 'ExpandedVisible'))]),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'HoverEnable', 'BooleanExpression' => $tl('ExpandedVisible')]),
+        FilterExpr('Jump', ['CodeOffset' => 0, '__target' => 'HoverDone']), ['label' => 'HoverEnable'],
+        FilterContext($tickMap(), FilterCall($native['EnableInteraction'], [], 'FinalFunction'), $voidPointer),
+        ['label' => 'HoverDone']);
+    $tick = FilterFunction($functionTemplate, $tickIndex, $classIndex, 'Tick', [$geometry, FilterField($floatTemplate, 'InDeltaTime', 'CPF_BlueprintVisible, CPF_BlueprintReadOnly, CPF_Parm'),
+        FilterField($boolTemplate, 'Hovered'), FilterField($boolTemplate, 'ExpandedVisible')], FilterCompileCode([
+        ...$hoverGuard,
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'CountsStepped', 'BooleanExpression' => FilterCall($native['IsValid'], [FilterVariable($classIndex, 'SSOverlayRadarState', true)])]),
+        FilterRadarMethod($classIndex, 'SSRadarCountStep'), ['label' => 'CountsStepped'],
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Interval', 'BooleanExpression' => FilterCall($native['IsValid'], [FilterVariable($classIndex, 'SSOverlayRadarState', true)])]),
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Interval', 'BooleanExpression' => FilterContext(FilterVariable($classIndex, 'SSOverlayRadarState', true), FilterVariable($native['RadarClass'], 'SSRadarMapProgressDirty', true), FilterPointer($native['RadarClass'], 'SSRadarMapProgressDirty'))]),
         FilterCall($refreshIndex, [], 'LocalFinalFunction'),
@@ -796,7 +1230,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Sync', 'BooleanExpression' => FilterCall($native['Less_FloatFloat'], [$elapsed, FilterExpr('FloatConst', ['Value' => 0.25])])]),
         FilterExpr('Return', ['ReturnExpression' => FilterExpr('Nothing')]), ['label' => 'Sync'],
         FilterExpr('Let', ['Value' => FilterPointer($classIndex, 'SSOverlayRadarSyncElapsed'), 'Variable' => $elapsed, 'Expression' => FilterExpr('FloatConst', ['Value' => 0])]),
-        FilterCall($syncRadarIndex, [], 'LocalFinalFunction'), FilterCall($native['LiveProgress'], [], 'LocalFinalFunction'), ...FilterReturn(),
+        FilterCall($syncRadarIndex, [], 'LocalFinalFunction'), FilterCall($zoneFunction, [], 'LocalFinalFunction'), FilterCall($countsFunction, [], 'LocalFinalFunction'), FilterCall($native['LiveProgress'], [], 'LocalFinalFunction'), ...FilterReturn(),
     ]));
     $tick->FunctionFlags = 'FUNC_BlueprintCosmetic, FUNC_Event, FUNC_Public, FUNC_BlueprintEvent';
     $tick->SuperStruct = $tick->SuperIndex = $tickBase;
@@ -806,8 +1240,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     array_unshift($class->Children, $tickIndex);
     $functions[] = 'Tick';
     foreach ($default->Data as $field) { if ($field->Name === 'bHasScriptImplementedTick') { $field->Value = 1; } }
-    $asset->Exports[$treeIndex - 1]->CreateBeforeSerializationDependencies[] = $panelIndex;
-    $root->CreateBeforeSerializationDependencies[] = $canvasSlot;
+    array_push($asset->Exports[$treeIndex - 1]->CreateBeforeSerializationDependencies, $panelIndex, $radarPanelIndex, $tabsIndex);
     foreach ($functions as $name) {
         foreach ($asset->Exports as $i => $export) { if ($export->ObjectName === $name) { $class->CreateBeforeSerializationDependencies[] = $i + 1; } }
     }
@@ -836,14 +1269,16 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $asset->NameMap = array_values(array_unique(array_merge($asset->NameMap, ['SaveStatsOverlay', 'SaveStats.Source.static', 'SaveStats.Source.hub', 'Actors', 'Index', 'CurrentActor', 'Emitter', 'TagResult', 'bIsChecked',
         'Marker', 'VisibleOnMap', 'OnCheckStateChanged', 'ECheckBoxState', 'ECheckBoxState::Checked', 'ECheckBoxState::Unchecked',
         'CheckedState', 'ScrollBox', 'ScrollBoxSlot', 'ConsumeMouseWheel', 'EConsumeMouseWheel', 'EConsumeMouseWheel::Always', 'PanelSlot', 'CheckBox', 'ZOrder', 'BrushColor', 'AutoWrapText', 'EVerticalAlignment::VAlign_Center',
-        'SSOverlayBatch', 'SSOverlayReset', 'SSOverlaySelectedTag', 'SSOverlayPreviousActors', 'SSOverlayRadarState', 'RadarWidgets', 'RadarCandidate', 'RadarIndex', 'ViewportResult',
-        'CurrentPlayer', 'CurrentHud', 'ExpectedOwner', 'OwnerObject', 'OwnerWidget', 'OwnerPlayer', 'GameHUDBaseWidget', 'CheckValue', 'PreviousRadar', 'RadarSelectedTag', 'RadarIncludeSites', 'RadarEnabled', 'RadarZoomIndex', 'RadarSizeIndex',
-        'SSOverlayRadarInitialized', 'SSOverlayRadarZoomIndex', 'SSOverlayRadarSizeIndex', 'SSOverlayRadarSyncElapsed', 'SSRadarSelectedTag', 'SSRadarIncludeSites', 'SSRadarEnabled', 'SSRadarZoomIndex', 'SSRadarSizeIndex', 'SSRadarRevision',
-        'SSRadarSetSelection', 'SSRadarSetView', 'SSRadarChangeZoom', 'SSRadarCycleSize', 'SSRadarMapProgressDirty', 'SSRadarAcknowledgeMapProgress', 'MyGeometry', 'InDeltaTime', 'FloatProperty', 'OnClicked'])));
+        'SSOverlayBatch', 'SSOverlayReset', 'Changed', 'SSOverlayZoneLabel', 'ZoneNameValue', 'ZoneNumber', 'DisplayIndex', 'CountsValid', 'Done', 'SSOverlayView_hideDone', 'EHorizontalAlignment', 'EHorizontalAlignment::HAlign_Fill', 'HorizontalAlignment', 'SSRadarCountStep', 'Status', 'SearchText', 'SearchValue', 'SSOverlaySearch', 'HintText', 'EditableTextBoxStyle', 'BackgroundImageNormal', 'BackgroundImageHovered', 'BackgroundImageFocused', 'BackgroundImageReadOnly', 'ForegroundColor', 'ButtonStyle', 'Normal', 'Hovered', 'Pressed', 'NormalPadding', 'PressedPadding', 'DrawAs', 'ESlateBrushDrawType', 'ESlateBrushDrawType::Box', 'TintColor', 'WidgetBarStyle', 'ScrollBarStyle', 'ScrollbarThickness', 'ScrollbarPadding', 'NormalThumbImage', 'HoveredThumbImage', 'DraggedThumbImage', 'VerticalBackgroundImage', 'VerticalTopSlotImage', 'VerticalBottomSlotImage', 'HorizontalBackgroundImage', 'HorizontalTopSlotImage', 'HorizontalBottomSlotImage', 'Vector2D', 'SSOverlayMapBlocked', 'Hovered', 'ExpandedVisible', 'WBP_SandboxExpanded', 'ZoneNameText', 'Header', 'ZoneName', 'ZoneTitle', 'LeftSum', 'Zoom', 'WidgetStyle', 'CheckBoxStyle', 'SlateBrush', 'UncheckedImage', 'UncheckedHoveredImage', 'UncheckedPressedImage', 'CheckedImage', 'CheckedHoveredImage', 'CheckedPressedImage', 'ImageSize', 'ResourceObject', 'SSOverlayCountRevision', 'SSRadarRequestCounts', 'SSRadarCountRevision', 'SSRadarCountLeft', 'SSRadarCountTotal', 'SSRadarCountZone', 'Zone', 'Revision', 'CountZone', 'LeftCount', 'TotalCount', 'Left', 'Total', 'Label', 'LabelText', 'StrProperty', 'TextProperty', 'ETextJustify::Right', 'SSOverlayZone', 'ZoneIndex', 'NewZone', 'ZoneSource', 'ZoneEntry', 'NameEnum', 'Map', 'SelectedMask', 'TypeActors', 'RadarSelectedMask', 'SSRadarSelectedMask', 'SSOverlayPreviousActors', 'SSOverlayRadarState', 'RadarWidgets', 'RadarCandidate', 'RadarIndex', 'ViewportResult',
+        'CurrentPlayer', 'CurrentHud', 'ExpectedOwner', 'OwnerObject', 'OwnerWidget', 'OwnerPlayer', 'GameHUDBaseWidget', 'CheckValue', 'PreviousRadar', 'RadarIncludeSites', 'RadarEnabled', 'RadarZoomIndex', 'RadarSizeIndex',
+        'SSOverlayRadarInitialized', 'SSOverlayRadarZoomIndex', 'SSOverlayRadarSizeIndex', 'SSOverlayRadarSyncElapsed', 'SSRadarIncludeSites', 'SSRadarEnabled', 'SSRadarZoomIndex', 'SSRadarSizeIndex', 'SSRadarRevision',
+        'SSRadarSetSelection', 'SSRadarSetView', 'SSRadarChangeZoom', 'SSRadarCycleSize', 'SSRadarMapProgressDirty', 'SSRadarAcknowledgeMapProgress', 'MyGeometry', 'InDeltaTime', 'FloatProperty', 'OnClicked',
+        'Legend_Panel', 'VerticalBox', 'VerticalBox_100', 'BackgroundColor', 'ColorAndOpacity', 'SlateColor', 'SpecifiedColor', 'LinearColor', 'Size', 'SlateChildSize', 'SizeRule', 'ESlateSizeRule', 'ESlateSizeRule::Fill',
+        'Justification', 'ETextJustify', 'ETextJustify::Center', 'Visibility', 'ESlateVisibility', 'ESlateVisibility::Collapsed', 'ESlateVisibility::Hidden', 'ESlateVisibility::Visible', 'Padding', 'Margin', 'bIsVariable', 'ZOrder'])));
     return [$asset, ['functionNames' => $functions, 'checkboxNames' => $checkboxes, 'buttonNames' => $buttons, 'widgetNames' => $newExports,
         'refreshFunction' => $refreshName, 'refreshFunctionIndex' => $refreshIndex, 'functionBytecodeSizes' => array_column(array_values(array_filter($asset->Exports, static fn(object $e): bool => in_array($e->ObjectName, $functions, true))), 'ScriptBytecodeSize', 'ObjectName'),
         'sourceDefaults' => ['static' => true, 'hub' => true, 'spawn' => false], 'typeKeys' => array_keys($catalog),
-        'visibilityRule' => 'selected type matches AND (static OR hub OR possible sites enabled) AND puzzle is not live-completed AND Pentad relic belongs to the active positive puzzle ID without positive collected proof AND verified dynamic Hub puzzle is available when native authority is ready; none selected hides every overlay marker', 'selectionMode' => 'single-or-none', 'nativeProperty' => 'MarkerEmitter.Marker.VisibleOnMap',
+        'visibilityRule' => 'selected type matches AND (static OR hub OR possible sites enabled) AND puzzle is not live-completed AND Pentad relic belongs to the active positive puzzle ID without positive collected proof AND verified dynamic Hub puzzle is available when native authority is ready; none selected hides every overlay marker', 'selectionMode' => 'any-or-none', 'selectionMask' => 'SSRadarSelectedMask', 'typeBits' => array_combine(array_column($typeFilters, 'key'), array_map(static fn(array $filter): int => OverlayTypeBit($filter['key']), $typeFilters)), 'nativeProperty' => 'MarkerEmitter.Marker.VisibleOnMap',
         'pentadRelicTag' => 'SaveStats.PentadRelic', 'pentadVisibilityFunction' => 'SSOverlayAllowsPentadActor', 'pentadFocusField' => 'SSRadarFocusPuzzleId', 'pentadFocusRefreshFunction' => 'SSRadarRefreshPentadFocus',
         'hubAvailabilityZoneTag' => 'SaveStats.HubZone.', 'hubAvailabilityFunction' => 'SSOverlayIsActorAvailable', 'hubAvailabilityQuery' => 'SSRadarIsPuzzleAvailable', 'hubAvailabilityRefreshFunction' => 'SSRadarRefreshAvailability',
         'liveProgressFunction' => 'SSOverlayRefreshProgress', 'liveProgressBudget' => 64, 'liveProgressIntervalSeconds' => 0.25, 'liveProgressQuery' => 'SSRadarIsSolved',
@@ -851,7 +1286,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         'radarSyncFunction' => 'SSOverlaySyncRadarView', 'radarSyncFunctionIndex' => $syncRadarIndex, 'radarPublishFunction' => 'SSOverlayPublishRadar',
         'radarDiscovery' => 'native current HUD owner; owning-player viewport HUD fallback; refreshed on map interaction and throttled visible map Tick', 'radarDefault' => true,
         'radarRangesMetres' => [50, 100, 200, 400], 'radarSizesPercent' => [100, 125, 150], 'radarDefaultRangeMetres' => 100, 'radarDefaultSizePercent' => 125,
-        'radarKeyboardHint' => 'F8 toggle | F3/F4 zoom | F10 size', 'runtimeVerified' => false]];
+        'radarKeyboardHint' => 'F8 show / hide radar; F3 / F4 zoom in / out; F10 cycle size', 'panelHost' => 'Legend_Panel', 'panelHostZOrder' => 90, 'zoneFunction' => 'SSOverlayRefreshZone', 'countsFunction' => 'SSOverlayRefreshCounts', 'countsSource' => 'SSRadarRequestCounts -> SSRadarCountLeft/SSRadarCountTotal indexed by catalog position', 'zoneTagPrefix' => 'SaveStats.TypeZone.', 'zonePresence' => array_map(static fn(array $zones): array => array_keys($zones), $zonePresence), 'sitePresence' => array_map(static fn(array $zones): array => array_keys($zones), $sitePresence), 'tabNames' => array_keys($tabs), 'typeOrder' => 'display name', 'runtimeVerified' => false]];
 }
 
 function FilterWidgetTemporary(string $target): string

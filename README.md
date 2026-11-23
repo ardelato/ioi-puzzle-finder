@@ -12,20 +12,42 @@ Puzzle Radar is an addon for **Islands of Insight** on Windows with the full
 
 | In the world map | While exploring |
 | --- | --- |
-| Pick one puzzle type in **Puzzle filters**. Hover a pin to see its name and ID. | Leave **Show radar** checked and close the map to see nearby puzzles of that type. |
-| Solved puzzles disappear as you play. Hub pins follow the current fixed puzzle selection. | Activate a Hidden Pentad to focus the radar on its remaining relics. |
+| Open the **Puzzles** tab in the map legend and tick any number of puzzle types. Hover a pin to see its name and ID. | Leave **Show gameplay radar** on and close the map to see nearby puzzles of the ticked types. |
+| The list follows the selected zone and shows *solved / total* for each type. Solved puzzles disappear as you play. | Activate a Hidden Pentad to focus the radar on its remaining relics. |
 
 ## Install
 
 1. Install the full [Offline Restored Mod v1.6](https://github.com/RiccTheThicc/RRMod_PuzzleFix/releases/tag/v1.6), including its runtime components.
 2. Close the game. In Steam, open **Islands of Insight → Manage → Browse local files**.
 3. Extract the release ZIP. Move any previous Puzzle Radar package outside `IslandsofInsight/Content/Paks/` and copy the single `.pak` from the ZIP into that folder.
-4. Start the game, open the map, and select a type under **Puzzle filters** in the lower-left corner.
+4. Start the game, open the map, then open the **Puzzles** tab in the map legend (lower right) and tick one or more puzzle types.
 
 The published `0.1.0-beta.1` archive contains `ZZ_SaveStatsMap_P.pak`.
 Builds from this source tree produce `ZZ_IOIPuzzleRadar_P.pak`.
 Keep only one of these files in `Paks`. To uninstall, close the game and
 remove your Puzzle Radar package from that folder.
+
+## Map panel
+
+The map legend in the lower right has three tabs: **Legend** (the game's own),
+**Puzzles** and **Radar**. The map ignores the cursor while it is over the panel.
+
+**Puzzles** follows the zone selected on the map. Its header shows the zone and
+how many puzzles are left there. The list shows only puzzle types found in that
+zone, sorted by name; nothing is ticked at first. Type in the search box to
+narrow the list, and use **Clear** to untick everything. Each row shows
+*solved / total* for the zone, or *done* when nothing is left. Counts cover
+fixed puzzles plus the Hub puzzles the game currently has active, and fill in
+over a few seconds after opening the map or changing zone. **Hide completed**
+removes finished types from the list; ticked types stay so they can be
+unticked. Map pins are limited to the selected zone.
+
+**Show possible sites** also lists types that only have possible spawn sites
+in the zone and shows those sites for ticked types. Treat these cyan pins as
+search areas, not confirmation that a puzzle is there.
+
+**Radar** holds **Show gameplay radar**, the range and size choices, and the
+shortcut keys.
 
 ## Radar controls
 
@@ -36,19 +58,18 @@ remove your Puzzle Radar package from that folder.
 | **F4** | Zoom out |
 | **F10** | Cycle the display size |
 
-The distance under the radar is its radius. Up and down carets mark puzzles
-more than 10 metres above or below you. Radar settings last for the current
-session. The radar hides during menus and puzzle input.
-
-**Include possible spawn sites** shows places where the selected type can spawn.
-Treat these cyan pins as search areas. Fixed puzzle pins follow live progress
-and clear when the game records a solve.
+The radar shows the ticked types, each pin with its type's icon. The distance
+under the radar is its radius. Up and down carets mark puzzles more than
+10 metres above or below you. Settings last for the current session; a new
+session starts with nothing ticked. The radar hides during menus and puzzle
+input. Fixed puzzle pins follow live progress and clear when the game records
+a solve.
 
 ## Compatibility and feedback
 
 The release ZIP includes everything needed for the addon once the full base
 mod is installed. Other mods that replace the world map or gameplay HUD can
-conflict. For beta reports, include the package version, selected puzzle type,
+conflict. For beta reports, include the package version, ticked puzzle types,
 and steps to reproduce. [Open an issue](https://github.com/ardelato/ioi-puzzle-radar/issues) · [Testing checklist](docs/BETA-TESTING.md)
 
 Thanks to Rushin, RiccTheThicc, meltdown, and the Islands of Insight community

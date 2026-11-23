@@ -64,6 +64,12 @@ function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cel
             $puzzleId = $point['pid'];
         }
         if ($hubAvailabilityZone > 0 && $puzzleId <= 0) { throw new InvalidArgumentException('Hub availability requires an exact positive puzzle ID.'); }
+        // Zone feeds per-zone counts; zero means unknown and is never counted.
+        $zone = $point['zoneIndex'] ?? 0;
+        if (!is_int($zone) || $zone < 0 || $zone > 15 || ($hubAvailabilityZone > 0 && $zone !== 0 && $zone !== $hubAvailabilityZone)) {
+            throw new InvalidArgumentException('Radar zone must be an int from 0 through 15 that agrees with Hub availability.');
+        }
+        if ($hubAvailabilityZone > 0) { $zone = $hubAvailabilityZone; }
         $completion = null;
         if (array_key_exists('completion', $point)) {
             if ($isSpawn) { throw new InvalidArgumentException('Possible spawn sites must not have special completion descriptors.'); }
@@ -123,7 +129,8 @@ function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cel
             $points[] = ['type' => $typeIndices[$type], 'cellX' => $cellX, 'cellY' => $cellY,
                 'position' => $position, 'isSpawn' => $isSpawn, 'id' => $id, 'puzzleId' => $puzzleId,
                 'pentadRelicIndex' => $pentadRelicIndex, 'pentadLocalPosition' => $pentadLocalPosition,
-                'hubAvailabilityZone' => $hubAvailabilityZone];
+                'hubAvailabilityZone' => $hubAvailabilityZone, 'zone' => $zone,
+                'countable' => !$isSpawn && (($point['group'] ?? 'static') !== 'hub' || $hubAvailabilityZone > 0)];
         }
     }
     if ($points === []) { $minX = $minY = $maxX = $maxY = 0; }
@@ -143,7 +150,7 @@ function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cel
     $stableIds = array_keys($seen);
     sort($stableIds, SORT_STRING);
     $ranks = array_flip($stableIds);
-    $positions = $isSpawn = $pointIds = $pointRanks = $puzzleIds = $pentadRelicIndices = $pentadLocalPositions = $hubAvailabilityZones = [];
+    $positions = $isSpawn = $pointIds = $pointRanks = $puzzleIds = $pentadRelicIndices = $pentadLocalPositions = $hubAvailabilityZones = $zones = $countable = [];
     foreach ($points as $point) {
         $offsets[$point['cell'] + 1]++;
         $positions[] = $point['position'];
@@ -154,6 +161,8 @@ function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cel
         $pentadRelicIndices[] = $point['pentadRelicIndex'];
         $pentadLocalPositions[] = $point['pentadLocalPosition'];
         $hubAvailabilityZones[] = $point['hubAvailabilityZone'];
+        $zones[] = $point['zone'];
+        $countable[] = $point['countable'] ? 1 : 0;
     }
     for ($i = 1, $length = count($offsets); $i < $length; $i++) { $offsets[$i] += $offsets[$i - 1]; }
     ksort($completions, SORT_NUMERIC);
@@ -166,7 +175,7 @@ function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cel
         'typeKeys' => $typeKeys, 'offsets' => $offsets, 'positions' => $positions,
         'isSpawn' => $isSpawn, 'pointIds' => $pointIds, 'pointRanks' => $pointRanks, 'puzzleIds' => $puzzleIds,
         'pentadRelicIndices' => $pentadRelicIndices, 'pentadLocalPositions' => $pentadLocalPositions,
-        'hubAvailabilityZones' => $hubAvailabilityZones, 'specialCompletions' => $specialCompletions];
+        'hubAvailabilityZones' => $hubAvailabilityZones, 'zones' => $zones, 'countable' => $countable, 'specialCompletions' => $specialCompletions];
 }
 
 /** A horizontal range of one cell width touches at most three contiguous rows. */

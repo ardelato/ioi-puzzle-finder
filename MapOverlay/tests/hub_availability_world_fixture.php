@@ -148,7 +148,7 @@ function BuildHubAvailabilityWorldFixture(string $output, string $build): array
     $control=[...$control,['label'=>'NativeReady'],
         $assert($math('EqualEqual_BoolBool',$call('Radar','SSRadarIsPuzzleAvailable',[$p('Pid'),$p('Zone')],FilterPointer($fn,'Boolean')),$p('Expected')),'shared cache equals actual native current-assignment query'),
         $unless($p('Expected'),'Negative'),$set('PositiveControls',$math('Add_IntInt',$s('PositiveControls'),$i(1))),$jump('CountsDone'),['label'=>'Negative'],
-        $set('NegativeControls',$math('Add_IntInt',$s('NegativeControls'),$i(1))),$unless($math('NotEqual_NameName',$get('SSRadarSelectedTag'),$name('SaveStats.Type.seek5')),'CountsDone'),
+        $set('NegativeControls',$math('Add_IntInt',$s('NegativeControls'),$i(1))),$unless($math('NotEqual_IntInt',$get('SSRadarSelectedMask'),$i(OverlayTypeBit('seek5'))),'CountsDone'),
         $set('OtherNegativeControls',$math('Add_IntInt',$s('OtherNegativeControls'),$i(1))),['label'=>'CountsDone'],
         $unless($math('EqualEqual_IntInt',$p('Pid'),$i(11118)),'Not11118'),FilterExpr('LetBool',['VariableExpression'=>$s('Observed11118Available'),'AssignmentExpression'=>$p('Expected')]),['label'=>'Not11118'],
         FilterExpr('LetBool',['VariableExpression'=>$p('ExpectedVisible'),'AssignmentExpression'=>$math('BooleanAND',$p('Expected'),$math('Not_PreBool',$call('Radar','SSRadarIsSolved',[$p('Pid')],FilterPointer($fn,'Boolean'))))]),
@@ -186,8 +186,8 @@ function BuildHubAvailabilityWorldFixture(string $output, string $build): array
         $b->call('KismetSystemLibrary','K2_ClearTimer',[$s('Radar'),$str('SSRadarTick')]),
         $set('Map',FilterExpr('DynamicCast',['ClassPtr'=>$classes['Map'],'TargetExpression'=>$b->call('WidgetBlueprintLibrary','Create',[FilterExpr('Self'),FilterExpr('ObjectConst',['Value'=>$classes['Map']]),$s('Controller')])])),
         $assert($valid($s('Map')),'unchanged production full map created in real offline world'),$assert($math('EqualEqual_ObjectObject',$mapGet('SSOverlayRadarState'),$s('Radar')),'production map binds current actual gameplay radar')];
-    $select=static function(string$type,bool$sites=false)use(&$run,$put,$s,$classes,$name,$set,$str,$truth,$mapGet,$call,$assert,$get,$math,$i,$hubTypes):void{
-        $run[]=$set('ProofType',$str($type));$run[]=$put($s('Map'),$classes['Map'],'SSOverlaySelectedTag',$name('SaveStats.Type.'.$type));
+    $select=static function(string$type,bool$sites=false)use(&$run,$put,$property,$s,$classes,$name,$set,$str,$truth,$mapGet,$call,$assert,$get,$math,$i,$hubTypes):void{
+        $run[]=$set('ProofType',$str($type));$run[]=$call('Map','SSOverlayClearTypes');$run[]=FilterExpr('LetBool',['VariableExpression'=>$property($s('Map'),$classes['Map'],'SSOverlayType_'.$type),'AssignmentExpression'=>FilterExpr('True')]);
         $run[]=FilterExpr('LetBool',['VariableExpression'=>$mapGet('SSOverlaySource_spawn'),'AssignmentExpression'=>$truth($sites)]);$run[]=$call('Map','SSOverlayRefresh');
         for($n=0;$n<5;$n++){$run[]=$call('Radar','SSRadarRefreshAvailability');$run[]=$assert($math('LessEqual_IntInt',$get('SSRadarAvailabilityQueriesLastRefresh'),$i(1)),'warmup performs one zone enumeration per refresh call');}
         if(in_array('SaveStats.Type.'.$type,$hubTypes,true)){foreach(range(2,6)as$zone){$run[]=$assert($get('SSRadarAvailabilityZoneReady'.$zone),'initialized zone'.$zone.' cached after five refreshes');}}

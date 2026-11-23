@@ -47,7 +47,7 @@ function BuildRadarLiveFixture(string $output): array
     $get = static fn(string $n): object => RadarContext($s('Radar'), FilterVariable($radarClass, $n, true), FilterPointer($radarClass, $n));
     $invoke = static fn(string $fn, array $args = [], ?object $pointer = null): object => RadarContext($s('Radar'), FilterExpr('VirtualFunction', ['VirtualFunctionName' => $fn, 'Parameters' => $args]), $pointer);
     $query = static fn(int $pid): object => $invoke('SSRadarIsSolved', [$i($pid)]);
-    $select = static fn(string $type, bool $sites = false, bool $enabled = true): object => $invoke('SSRadarSetSelection', [$name($type === 'None' ? 'None' : 'SaveStats.Type.' . $type), $bool($sites), $bool($enabled)]);
+    $select = static fn(string $type, bool $sites = false, bool $enabled = true): object => $invoke('SSRadarSetSelection', [$i($type === 'None' ? 0 : OverlayTypeBit($type)), $bool($sites), $bool($enabled)]);
     $step = static fn(): object => $invoke('SSRadarUpdate', [$f(0), $f(0), $f(0), $f(0), $bool(false), $f(0.1)]);
     $count = static fn(): object => $array('Array_Length', $get('SSRadarDisplayIndices'));
     $equalInt = static fn(object $v, int $n): object => $math('EqualEqual_IntInt', $v, $i($n));

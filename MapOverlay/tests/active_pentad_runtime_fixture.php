@@ -74,7 +74,7 @@ function BuildActivePentadRuntimeFixture(string $output, ?int $probeChecks = nul
     $putBool = static fn(string $n, bool $v): object => FilterExpr('LetBool', ['VariableExpression' => $get($n), 'AssignmentExpression' => $bool($v)]);
     $invoke = static fn(string $fn, array $args = [], ?object $pointer = null): object => RadarContext($s('Radar'), FilterExpr('VirtualFunction', ['VirtualFunctionName' => $fn, 'Parameters' => $args]), $pointer);
     $step = static fn(bool $hidden = false): object => $invoke('SSRadarUpdate', [$f(0), $f(0), $f(0), $f(0), $bool($hidden), $f(0.1)]);
-    $select = static fn(string $type, bool $sites = false, bool $enabled = true): object => $invoke('SSRadarSetSelection', [$name('SaveStats.Type.' . $type), $bool($sites), $bool($enabled)]);
+    $select = static fn(string $type, bool $sites = false, bool $enabled = true): object => $invoke('SSRadarSetSelection', [FilterExpr('IntConst', ['Value' => OverlayTypeBit($type)]), $bool($sites), $bool($enabled)]);
     $count = static fn(): object => $array('Array_Length', $get('SSRadarDisplayIndices'));
     $eq = static fn(object $v, int $n): object => $math('EqualEqual_IntInt', $v, $i($n));
     $let = static fn(string $n, object $v): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $l($n), 'Expression' => $v]);

@@ -54,7 +54,7 @@ function BuildRadarTimerFixture(string $output, string $world, bool $timerOnly =
         $b->method($state('TimerController'), 'Controller', 'Possess', [$state('TimerPawn')]),
         $set('TimerRadar', FilterExpr('DynamicCast', ['ClassPtr' => $radarClass, 'TargetExpression' => $b->call('WidgetBlueprintLibrary', 'Create', [FilterExpr('Self'), FilterExpr('ObjectConst', ['Value' => $radarClass]), $state('TimerController')])])),
         $assert($valid($state('TimerRadar')), 'actual radar created with local player'), $b->method($state('TimerRadar'), 'UserWidget', 'AddToViewport', [$int(0)]),
-        RadarContext($state('TimerRadar'), FilterCall($setter, [FilterExpr('NameConst', ['Value' => 'SaveStats.Type.hiddenCube']), $bool(false), $bool(true)], 'FinalFunction')),
+        RadarContext($state('TimerRadar'), FilterCall($setter, [FilterExpr('IntConst', ['Value' => OverlayTypeBit('hiddenCube')]), $bool(false), $bool(true)], 'FinalFunction')),
         $timer('ReceiveBeginPlay', 'VerifyAutomatic', 0.5), ...$tail()];
     if ($timerOnly) {
         $code = [$code[0], $code[1], ...array_slice($code, 7)];

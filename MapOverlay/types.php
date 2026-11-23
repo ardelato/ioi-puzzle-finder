@@ -81,3 +81,20 @@ function GetOverlayTypes(): array
     }
     return $types;
 }
+
+/**
+ * Selection bit shared by the map and radar. It follows the full catalog order, so a
+ * radar built from a subset catalog still agrees with the map about every type.
+ */
+function OverlayTypeBit(string $key): int
+{
+    return 1 << OverlayCatalogSlot($key);
+}
+
+/** Position in the full catalog; also the index of per-type count arrays. */
+function OverlayCatalogSlot(string $key): int
+{
+    $position = array_search($key, array_keys(GetOverlayTypes()), true);
+    if ($position === false || $position > 30) { throw new InvalidArgumentException('Unknown overlay type: ' . $key); }
+    return $position;
+}
