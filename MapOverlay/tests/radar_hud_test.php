@@ -125,4 +125,56 @@ $findArraySet = static function (mixed $value) use (&$findArraySet, &$arraySetCa
 $findArraySet($radarExports['SSRadarCountStep']->ScriptBytecode);
 CheckRadarHud($arraySetCalls === 2, 'Count step must increment both left and total.');
 CheckRadarHud(array_column($radarExports['SSRadarRequestCounts']->LoadedProperties, 'Name') === ['Zone'] && $radarManifest['counts']['request'] === 'SSRadarRequestCounts(Zone)', 'The map requests counts by zone.');
-echo "HUD radar embedding checks passed: native functions, lifecycle host, input transparency, placement, duplicate rejection, and the multi-type selection mask.\n";
+
+// Custom map markers: the local player's MapMarker location pings, drawn whatever types are selected.
+$importNamed = static function (string $name, string $class) use ($radar): ?object {
+    foreach ($radar->Imports as $import) { if ($import->ObjectName === $name && $import->ClassName === $class) { return $import; } }
+    return null;
+};
+$outerName = static fn(?object $import): ?string => $import === null ? null : $radar->Imports[-1 - $import->OuterIndex]->ObjectName;
+CheckRadarHud($outerName($importNamed('SophiaPlayerState', 'Class')) === '/Script/IslandsofInsight' && $outerName($importNamed('SocialSystemComponent', 'Class')) === '/Script/IslandsofInsight'
+    && $outerName($importNamed('LocationPingInfo', 'ScriptStruct')) === '/Script/IslandsofInsight' && $outerName($importNamed('Controller', 'Class')) === '/Script/Engine',
+    'Map markers need the native player state, social component, ping struct and controller.');
+CheckRadarHud($outerName($importNamed('MapMarker', 'Texture2D')) === '/Game/ASophia/UI/HUD/Markers/Textures/MapMarker', 'In-range markers must use the game\'s own map marker icon.');
+$exportIndex = static fn(string $name): int => array_search($radarExports[$name], $radar->Exports, true) + 1;
+for ($marker = 0; $marker < 8; $marker++) {
+    foreach (['SSRadarMarker', 'SSRadarMarkerArrow', 'SSRadarMarkerDistance'] as $prefix) {
+        $widget = $radarExports[$prefix . $marker] ?? null;
+        CheckRadarHud($widget !== null && isset($radarFields[$prefix . $marker]) && array_column($widget->Data, 'Value', 'Name')['Visibility'] === 'ESlateVisibility::Collapsed', "{$prefix}{$marker} must exist and start collapsed.");
+        CheckRadarHud($exportIndex($prefix . $marker) > $exportIndex('SSRadarHeight23'), 'Map markers must draw above puzzle pins.');
+    }
+}
+CheckRadarHud(!isset($radarExports['SSRadarMarker8']) && $radarManifest['mapMarkers']['slots'] === 8 && $radarManifest['mapMarkers']['runtimeVerified'] === true, 'The radar has eight marker slots.');
+$markerFunction = $radarExports['SSRadarRenderMarkers'];
+$markerLocals = array_column($markerFunction->LoadedProperties, null, 'Name');
+CheckRadarHud($radar->Imports[-1 - $markerLocals['Ping']->Struct]->ObjectName === 'LocationPingInfo' && $markerLocals['Ping']->ElementSize === 48
+    && $radar->Imports[-1 - $markerLocals['MarkerLoc']->Struct]->ObjectName === 'Vector', 'Marker locals must hold a LocationPingInfo and its Vector location.');
+CheckRadarHud($radar->Imports[-1 - $markerLocals['State']->PropertyClass]->ObjectName === 'SophiaPlayerState' && $radar->Imports[-1 - $markerLocals['Social']->PropertyClass]->ObjectName === 'SocialSystemComponent', 'Marker object locals must carry their native classes.');
+$markerCode = json_encode($markerFunction->ScriptBytecode, JSON_THROW_ON_ERROR);
+foreach (['PlayerState', 'PingSystemComponent', 'latestUpdatedLocationPings', 'PingType', 'Loc', 'SSRadarRadiusCm'] as $path) {
+    CheckRadarHud(str_contains($markerCode, '"Path":["' . $path . '"]'), "Marker rendering must read {$path}.");
+}
+$markerCalls = [];
+$eachCall($markerFunction->ScriptBytecode, static function (string $name, object $call) use (&$markerCalls, $radar): void {
+    $markerCalls[$name] = ($markerCalls[$name] ?? 0) + 1;
+    if ($name === 'EqualEqual_ByteByte') {
+        CheckRadarHud(str_contains($call->Parameters[0]->{'$type'}, 'EX_StructMemberContext') && $call->Parameters[0]->StructMemberExpression->New->Path === ['PingType']
+            && str_contains($call->Parameters[1]->{'$type'}, 'EX_ByteConst') && $call->Parameters[1]->Value === 0, 'Only ELocationPingType::MapMarker (0) pings are map markers.');
+    }
+    if ($name === 'Round') {
+        // Labels measure straight-line distance (height included), like the game's own marker.
+        CheckRadarHud($call->Parameters[0]->Parameters[0]->Variable->New->Path === ['LabelCm'], 'Marker distance labels must use the 3D LabelCm distance.');
+    }
+    if ($name === 'DegAtan2') {
+        // The arrow texture points up and Slate angles turn clockwise: angle = atan2(right, up).
+        $up = $call->Parameters[1];
+        CheckRadarHud($call->Parameters[0]->Variable->New->Path === ['UnitX'] && $radar->Imports[-1 - $up->StackNode]->ObjectName === 'Multiply_FloatFloat'
+            && $up->Parameters[0]->Variable->New->Path === ['UnitY'] && $up->Parameters[1]->Value === -1.0, 'The rim arrow angle must be DegAtan2(UnitX, -UnitY).');
+    }
+});
+CheckRadarHud(($markerCalls['EqualEqual_ByteByte'] ?? 0) === 8 && ($markerCalls['Array_Get'] ?? 0) === 8 && ($markerCalls['SetRenderTransformAngle'] ?? 0) === 8 && ($markerCalls['DegAtan2'] ?? 0) === 8,
+    'Every marker slot must filter by ping type and point its rim arrow.');
+$updateCode = $radarExports['SSRadarUpdate']->ScriptBytecode;
+$renderMarkers = $exportIndex('SSRadarRenderMarkers');
+CheckRadarHud(count(array_filter($updateCode, static fn(object $e): bool => ($e->StackNode ?? null) === $renderMarkers)) === 1, 'Every visible update must render the map markers once.');
+echo "HUD radar embedding checks passed: native functions, lifecycle host, input transparency, placement, duplicate rejection, the multi-type selection mask, and map markers.\n";

@@ -247,9 +247,9 @@ final class RadarWidgetBuilder
             $p = $this->field($kind, $n);
             if ($kind === 'Object') { $p->PropertyClass = $this->native['Object']; }
             if ($kind === 'Struct') {
-                $struct = match ($n) { 'PlayerRotation' => 'Rotator', 'Timer' => 'TimerHandle', 'Transform' => 'WidgetTransform', 'Translation' => 'Vector2D', 'InputMapping' => 'InputActionKeyMapping', 'InputKey' => 'Key', 'PuzzleStatus' => 'PuzzleSolveData', default => 'Vector' };
+                $struct = match ($n) { 'PlayerRotation' => 'Rotator', 'Timer' => 'TimerHandle', 'Transform' => 'WidgetTransform', 'Translation' => 'Vector2D', 'InputMapping' => 'InputActionKeyMapping', 'InputKey' => 'Key', 'PuzzleStatus' => 'PuzzleSolveData', 'Ping' => 'LocationPingInfo', default => 'Vector' };
                 $p->Struct = $this->native[$struct];
-                $p->ElementSize = match ($struct) { 'TimerHandle', 'Vector2D' => 8, 'WidgetTransform' => 28, 'InputActionKeyMapping' => 48, 'Key' => 32, 'PuzzleSolveData' => 40, default => 12 };
+                $p->ElementSize = match ($struct) { 'TimerHandle', 'Vector2D' => 8, 'WidgetTransform' => 28, 'InputActionKeyMapping', 'LocationPingInfo' => 48, 'Key' => 32, 'PuzzleSolveData' => 40, default => 12 };
             }
             $properties[] = $p;
         }
@@ -363,7 +363,11 @@ function BuildRadarWidget(object $base, array $index): array
     }
     $b->native['SceneComponent'] = OverlayImport($b->asset, 'SceneComponent', $b->native['Engine'], '/Script/CoreUObject', 'Class');
     foreach (['SophiaGameplayStatics', 'PuzzleDatabase', 'PuzzleData'] as $nativeClass) { $b->native[$nativeClass] = OverlayImport($b->asset, $nativeClass, $b->native['IslandsofInsight'], '/Script/CoreUObject', 'Class'); }
-    foreach (['GameModeBase', 'KismetStringLibrary'] as $nativeClass) { $b->native[$nativeClass] = OverlayImport($b->asset, $nativeClass, $b->native['Engine'], '/Script/CoreUObject', 'Class'); }
+    foreach (['GameModeBase', 'KismetStringLibrary', 'Controller'] as $nativeClass) { $b->native[$nativeClass] = OverlayImport($b->asset, $nativeClass, $b->native['Engine'], '/Script/CoreUObject', 'Class'); }
+    // Custom map markers are the local player's MapMarker location pings.
+    foreach (['SophiaPlayerState', 'SocialSystemComponent'] as $nativeClass) { $b->native[$nativeClass] = OverlayImport($b->asset, $nativeClass, $b->native['IslandsofInsight'], '/Script/CoreUObject', 'Class'); }
+    $b->native['LocationPingInfo'] = OverlayImport($b->asset, 'LocationPingInfo', $b->native['IslandsofInsight'], '/Script/CoreUObject', 'ScriptStruct');
+    $markerSlots = 8;
     $f = static fn(float $n): object => FilterExpr('FloatConst', ['Value' => $n]);
     $i = static fn(int $n): object => FilterExpr('IntConst', ['Value' => $n]);
     $state = static fn(string $n): object => FilterVariable(1, $n, true);
@@ -442,8 +446,17 @@ function BuildRadarWidget(object $base, array $index): array
         $b->child('Image', 'SSRadarPin' . $pin, [FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed'), $brush($texture('SSIcon006'))], 108, 108, 20, 20);
         $b->child('TextBlock', 'SSRadarHeight' . $pin, [OverlayText('Text', ''), $font(11), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed')], 120, 99, 14, 16);
     }
+    // Map markers draw above pins: the game's own marker icon in range, a cyan rim arrow and distance beyond it.
+    $linear = static fn(string $name, float $r, float $g, float $bl, float $a): object => FilterStruct($name, 'LinearColor', [(object)['$type' => 'UAssetAPI.PropertyTypes.Structs.LinearColorPropertyData, UAssetAPI', 'Name' => $name,
+        'Value' => (object)['$type' => 'UAssetAPI.UnrealTypes.FLinearColor, UAssetAPI', 'R' => $r, 'G' => $g, 'B' => $bl, 'A' => $a]]]);
+    for ($marker = 0; $marker < $markerSlots; $marker++) {
+        $b->child('Image', 'SSRadarMarker' . $marker, [FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed'), $brush($texture('MapMarker'))], 108, 108, 18, 18);
+        $b->child('Image', 'SSRadarMarkerArrow' . $marker, [FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed'), $brush($texture('SSRadHead')), $linear('ColorAndOpacity', 0.86, 0.88, 0.98, 1)], 108, 108, 14, 14);
+        $b->child('TextBlock', 'SSRadarMarkerDistance' . $marker, [OverlayText('Text', ''), $font(10), FilterEnum('Justification', 'ETextJustify', 'Center'),
+            FilterStruct('ColorAndOpacity', 'SlateColor', [$linear('SpecifiedColor', 0.75, 0.94, 0.97, 1)]), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed')], 108, 108, 52, 16);
+    }
     foreach (['SSRadarSetSelection', 'SSRadarSetView', 'SSRadarApplyView', 'SSRadarChangeZoom', 'SSRadarCycleSize', 'SSRadarToggleEnabled', 'SSRadarIsSolved', 'SSRadarAcknowledgeMapProgress',
-        'SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable', 'SSRadarRefreshPentadFocus', 'SSRadarIsPentadRelicVisible', 'SSRadarMatchesPentadFocus', 'SSRadarHandleShortcut', ...array_column($shortcuts, 1), 'SSRadarApplyIcon', 'SSRadarStartScan', 'SSRadarScan', 'SSRadarRender', 'SSRadarUpdate', 'SSRadarTick', 'OnInitialized', 'Construct', 'Destruct'] as $fn) { $b->reserve($fn); }
+        'SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable', 'SSRadarRefreshPentadFocus', 'SSRadarIsPentadRelicVisible', 'SSRadarMatchesPentadFocus', 'SSRadarHandleShortcut', ...array_column($shortcuts, 1), 'SSRadarApplyIcon', 'SSRadarStartScan', 'SSRadarScan', 'SSRadarRender', 'SSRadarRenderMarkers', 'SSRadarUpdate', 'SSRadarTick', 'OnInitialized', 'Construct', 'Destruct'] as $fn) { $b->reserve($fn); }
     $specialCompletion = AddRadarSpecialCompletion($b, $index['specialCompletions'] ?? []);
     $makeVec = static fn(object $x, object $y): object => $math('MakeVector2D', $x, $y);
     $labelText = static fn(string $n, string $text): object => $b->method($state($n), 'TextBlock', 'SetText', [$b->call('KismetTextLibrary', 'Conv_StringToText', [FilterExpr('StringConst', ['Value' => $text])])]);
@@ -868,6 +881,72 @@ function BuildRadarWidget(object $base, array $index): array
     foreach ($b->asset->Exports[$fn - 1]->LoadedProperties as $property) {
         if ($property->Name === 'Texture') { $property->PropertyClass = $b->native['Texture2D']; }
     }
+    // The local player's custom map markers: SocialSystemComponent.latestUpdatedLocationPings entries
+    // whose PingType is ELocationPingType::MapMarker (0). Independent of the selected puzzle types.
+    $fn = $b->functions['SSRadarRenderMarkers'];
+    $l = static fn(string $n): object => FilterVariable($fn, $n);
+    $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $l($n), 'Expression' => $e]);
+    $member = static fn(string $local, string $struct, string $name): object => FilterExpr('StructMemberContext', ['StructMemberExpression' => FilterPointer($b->native[$struct], $name), 'StructExpression' => $l($local)]);
+    $pings = static fn(): object => $nativeProperty($l('Social'), 'SocialSystemComponent', 'latestUpdatedLocationPings');
+    $str = static fn(string $s): object => FilterExpr('StringConst', ['Value' => $s]);
+    $concat = static fn(object $a, object $c): object => $b->call('KismetStringLibrary', 'Concat_StrStr', [$a, $c]);
+    $intText = static fn(object $n): object => $b->call('KismetStringLibrary', 'Conv_IntToString', [$n]);
+    $setText = static fn(string $widget, object $string): object => $b->method($state($widget), 'TextBlock', 'SetText', [$b->call('KismetTextLibrary', 'Conv_StringToText', [$string])]);
+    $markers = [$let('Count', $i(0)), $let('Index', $i(0)),
+        $let('Sin', $math('DegSin', $state('SSRadarYaw'))), $let('Cos', $math('DegCos', $state('SSRadarYaw'))),
+        $let('Controller', $b->call('GameplayStatics', 'GetPlayerController', [FilterExpr('Self'), $i(0)])),
+        $unless($valid($l('Controller')), 'Slots'),
+        $let('State', FilterExpr('DynamicCast', ['ClassPtr' => $b->native['SophiaPlayerState'], 'TargetExpression' => $nativeProperty($l('Controller'), 'Controller', 'PlayerState')])),
+        $unless($valid($l('State')), 'Slots'),
+        $let('Social', $nativeProperty($l('State'), 'SophiaPlayerState', 'PingSystemComponent')),
+        $unless($valid($l('Social')), 'Slots'),
+        $let('Count', $array('Array_Length', $pings())),
+        ['label' => 'Slots']];
+    for ($marker = 0; $marker < $markerSlots; $marker++) {
+        $icon = 'SSRadarMarker' . $marker; $arrow = 'SSRadarMarkerArrow' . $marker; $distance = 'SSRadarMarkerDistance' . $marker;
+        $markers = [...$markers,
+            // Each slot takes the next MapMarker ping; other ping types are skipped.
+            ['label' => 'Find' . $marker], $unless($math('Less_IntInt', $l('Index'), $l('Count')), 'Hide' . $marker),
+            $array('Array_Get', $pings(), $l('Index'), $l('Ping')), $let('Index', $math('Add_IntInt', $l('Index'), $i(1))),
+            $unless($math('EqualEqual_ByteByte', $member('Ping', 'LocationPingInfo', 'PingType'), FilterExpr('ByteConst', ['Value' => 0])), 'Find' . $marker),
+            $let('MarkerLoc', $member('Ping', 'LocationPingInfo', 'Loc')),
+            $let('DX', $math('Subtract_FloatFloat', $member('MarkerLoc', 'Vector', 'X'), $state('SSRadarPlayerX'))),
+            $let('DY', $math('Subtract_FloatFloat', $member('MarkerLoc', 'Vector', 'Y'), $state('SSRadarPlayerY'))),
+            // Heading-up screen offsets in cm, +X right and +Y down, as the puzzle pins use.
+            $let('RightCm', $math('Subtract_FloatFloat', $math('Multiply_FloatFloat', $l('DY'), $l('Cos')), $math('Multiply_FloatFloat', $l('DX'), $l('Sin')))),
+            $let('DownCm', $math('Multiply_FloatFloat', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('DX'), $l('Cos')), $math('Multiply_FloatFloat', $l('DY'), $l('Sin'))), $f(-1))),
+            $let('Distance', $math('Sqrt', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('RightCm'), $l('RightCm')), $math('Multiply_FloatFloat', $l('DownCm'), $l('DownCm'))))),
+            $unless($math('LessEqual_FloatFloat', $l('Distance'), $state('SSRadarRadiusCm')), 'Far' . $marker),
+            $b->method($state($icon), 'Widget', 'SetRenderTranslation', [$makeVec(
+                $math('Multiply_FloatFloat', $l('RightCm'), $math('Divide_FloatFloat', $f(96), $state('SSRadarRadiusCm'))),
+                $math('Multiply_FloatFloat', $l('DownCm'), $math('Divide_FloatFloat', $f(96), $state('SSRadarRadiusCm'))))]),
+            $visible($icon, 3), $visible($arrow, 1), $visible($distance, 1), $jump('Next' . $marker),
+            // Beyond the range: an arrow on the rim pointing at the marker, its distance just inside.
+            ['label' => 'Far' . $marker],
+            $let('UnitX', $math('Divide_FloatFloat', $l('RightCm'), $l('Distance'))), $let('UnitY', $math('Divide_FloatFloat', $l('DownCm'), $l('Distance'))),
+            $b->method($state($arrow), 'Widget', 'SetRenderTranslation', [$makeVec($math('Multiply_FloatFloat', $l('UnitX'), $f(98)), $math('Multiply_FloatFloat', $l('UnitY'), $f(98)))]),
+            $b->method($state($arrow), 'Widget', 'SetRenderTransformAngle', [$math('DegAtan2', $l('UnitX'), $math('Multiply_FloatFloat', $l('UnitY'), $f(-1)))]),
+            $b->method($state($distance), 'Widget', 'SetRenderTranslation', [$makeVec($math('Multiply_FloatFloat', $l('UnitX'), $f(74)), $math('Multiply_FloatFloat', $l('UnitY'), $f(74)))]),
+            // The label gives straight-line distance, height included, as the game's own marker does;
+            // position and range stay horizontal because the radar is a top-down view.
+            $let('DZ', $math('Subtract_FloatFloat', $member('MarkerLoc', 'Vector', 'Z'), $state('SSRadarPlayerZ'))),
+            $let('LabelCm', $math('Sqrt', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('Distance'), $l('Distance')), $math('Multiply_FloatFloat', $l('DZ'), $l('DZ'))))),
+            $let('Meters', $math('Round', $math('Divide_FloatFloat', $l('LabelCm'), $f(100)))),
+            $unless($math('Less_IntInt', $l('Meters'), $i(1000)), 'Km' . $marker),
+            $setText($distance, $concat($intText($l('Meters')), $str(' m'))), $jump('Shown' . $marker),
+            ['label' => 'Km' . $marker], $let('Tenths', $math('Round', $math('Divide_FloatFloat', $l('LabelCm'), $f(10000)))),
+            $setText($distance, $concat($concat($intText($math('Divide_IntInt', $l('Tenths'), $i(10))), $str('.')), $concat($intText($math('Percent_IntInt', $l('Tenths'), $i(10))), $str(' km')))),
+            ['label' => 'Shown' . $marker], $visible($icon, 1), $visible($arrow, 3), $visible($distance, 3), $jump('Next' . $marker),
+            ['label' => 'Hide' . $marker], $visible($icon, 1), $visible($arrow, 1), $visible($distance, 1),
+            ['label' => 'Next' . $marker]];
+    }
+    $b->define('SSRadarRenderMarkers', [], ['Controller' => 'Object', 'State' => 'Object', 'Social' => 'Object', 'Ping' => 'Struct', 'MarkerLoc' => 'Struct',
+        'Count' => 'Int', 'Index' => 'Int', 'Meters' => 'Int', 'Tenths' => 'Int', 'Sin' => 'Float', 'Cos' => 'Float', 'DX' => 'Float', 'DY' => 'Float',
+        'RightCm' => 'Float', 'DownCm' => 'Float', 'Distance' => 'Float', 'UnitX' => 'Float', 'UnitY' => 'Float', 'DZ' => 'Float', 'LabelCm' => 'Float'], $markers);
+    foreach ($b->asset->Exports[$fn - 1]->LoadedProperties as $property) {
+        $type = ['Controller' => 'PlayerController', 'State' => 'SophiaPlayerState', 'Social' => 'SocialSystemComponent'][$property->Name] ?? null;
+        if ($type !== null) { $property->PropertyClass = $b->native[$type]; }
+    }
     $fn = $b->functions['SSRadarUpdate'];
     $p = static fn(string $n): object => FilterVariable($fn, $n);
     $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $e]);
@@ -876,6 +955,7 @@ function BuildRadarWidget(object $base, array $index): array
         $unless($math('BooleanAND', $state('SSRadarEnabled'), $math('BooleanAND', $math('Not_PreBool', $p('MenuHidden')), $math('NotEqual_IntInt', $state('SSRadarSelectedMask'), $i(0)))), 'Hidden'),
         FilterExpr('LetBool', ['VariableExpression' => $p('Teleported'), 'AssignmentExpression' => $math('Greater_FloatFloat', $distanceSquared($math('Subtract_FloatFloat', $p('PlayerX'), $state('SSRadarPlayerX')), $math('Subtract_FloatFloat', $p('PlayerY'), $state('SSRadarPlayerY'))), $f(25000000))]),
         $set('SSRadarPlayerX', $p('PlayerX')), $set('SSRadarPlayerY', $p('PlayerY')), $set('SSRadarPlayerZ', $p('PlayerZ')), $set('SSRadarYaw', $p('HeadingYaw')),
+        $localCall('SSRadarRenderMarkers'),
         // Hidden when none of the selected types is indexed by this radar.
         $unless($math('NotEqual_IntInt', $math('And_IntInt', $state('SSRadarSelectedMask'), $i($radarMask)), $i(0)), 'Hidden'),
         $let('CellX', $floorCell($p('PlayerX'), $index['originCellX'])), $let('CellY', $floorCell($p('PlayerY'), $index['originCellY'])),
@@ -1031,6 +1111,12 @@ function BuildRadarWidget(object $base, array $index): array
         'scanOrder' => 'selected types in radar type order over one bounds computation; one commit after the last selected type',
         'pinIcons' => ['texturesField' => 'SSRadarTypeTextures', 'cacheFields' => 'SSRadarPinType0..23', 'rule' => 'each pin shows its point type icon; brush set only when the cached type differs'],
         'caption' => ['none' => 'Puzzle radar', 'one' => 'type display name', 'many' => 'N puzzle types'],
+        'mapMarkers' => ['renderFunction' => 'SSRadarRenderMarkers', 'slots' => $markerSlots,
+            'authority' => 'PlayerController(0).PlayerState as SophiaPlayerState -> PingSystemComponent (SocialSystemComponent) -> latestUpdatedLocationPings',
+            'entryStruct' => 'LocationPingInfo', 'typeField' => 'PingType', 'mapMarkerType' => 'ELocationPingType::MapMarker = 0', 'positionField' => 'Loc',
+            'inRange' => 'game MapMarker icon at its position', 'outOfRange' => 'cyan SSRadHead arrow on the rim (98 px) with its distance inside (74 px)',
+            'distanceText' => ['belowOneKm' => 'N m', 'fromOneKm' => 'N.N km', 'measure' => '3D straight-line from the player (height included); placement and range use horizontal distance'], 'independentOfSelection' => true,
+            'runtimeVerified' => true],
         'liveCompletion' => ['queryFunction' => 'SSRadarIsSolved', 'authority' => 'GISProgression.GetPuzzleSolveStatus', 'solvedField' => 'PuzzleSolveData.bSolved', 'statusStructBytes' => 40,
             'unavailableReturnsSolved' => false, 'possibleSitePuzzleId' => 0, 'cachedOrdinaryStatusValues' => false, 'renderStatusChecksLimit' => 24,
             'mapProgressDirtyField' => 'SSRadarMapProgressDirty', 'mapAcknowledgeFunction' => 'SSRadarAcknowledgeMapProgress'],

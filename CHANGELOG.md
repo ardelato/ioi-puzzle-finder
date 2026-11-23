@@ -16,6 +16,8 @@
   displayed name.
 - Restyle the panel: solid backdrop, gold diamond checkboxes, switches, game-
   style buttons and range / size choices on the Radar tab.
+- Show your custom map markers on the radar whatever types are selected: the
+  map marker icon within range, otherwise a cyan rim arrow with the distance.
 - Stop inactive Hub puzzles flashing on the map after ticking a type: Hub
   availability is now tracked for every Hub type in the background instead of
   restarting on each selection change.
