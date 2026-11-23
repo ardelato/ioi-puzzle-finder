@@ -69,7 +69,8 @@ try {
         'MapOverlay/tests/hub_availability_data_test.php',
         'MapOverlay/tests/completion_metadata_test.php',
         'MapOverlay/tests/lib_helpers_test.php',
-        'MapOverlay/tests/icon_texture_test.php'
+        'MapOverlay/tests/icon_texture_test.php',
+        'MapOverlay/tests/labyrinth_bake_test.php'
     )
     foreach ($test in $unitTests) {
         Write-Output "Running $test"
