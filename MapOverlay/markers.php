@@ -144,9 +144,33 @@ function BuildOverlayData(array $puzzleMap, array $solvedPids, array $staticRema
     }
     ksort($markers, SORT_NUMERIC);
     ksort($unlocated, SORT_NUMERIC);
+    $markers = AssignOverlayMysteryZones($markers);
     $spawnSites = BuildOverlaySpawnSites($spawnRows, $unlocated);
     $counts['spawn'] = ['sites' => count((array)$spawnSites), 'renderPoints' => count((array)$spawnSites), 'visibleByDefault' => false];
     return ['markers' => (object)$markers, 'unlocated' => (object)$unlocated, 'spawnSites' => $spawnSites, 'counts' => $counts];
+}
+
+/**
+ * SaveStats files every Mystery under a placeholder zone (7, "Unknown Zone"), which the map's
+ * per-zone pins and counts would read as First Echoes. Use the zone of the nearest located
+ * non-Mystery puzzle instead (horizontal distance; ties go to the lower puzzle ID).
+ */
+function AssignOverlayMysteryZones(array $markers): array
+{
+    $references = array_filter($markers, static fn(array $m): bool => ($m['family'] ?? '') !== 'mystery' && ($m['zoneIndex'] ?? 0) >= 1);
+    foreach ($markers as &$marker) {
+        if (($marker['family'] ?? '') !== 'mystery') { continue; }
+        $best = null; $bestDistance = INF;
+        foreach ($references as $refPid => $ref) {
+            $distance = ($ref['x'] - $marker['x']) ** 2 + ($ref['y'] - $marker['y']) ** 2;
+            if ($distance < $bestDistance) { $best = $refPid; $bestDistance = $distance; }
+        }
+        if ($best === null) { continue; }
+        $marker['zoneIndex'] = $references[$best]['zoneIndex'];
+        $marker['zoneInferredFrom'] = $best;
+    }
+    unset($marker);
+    return $markers;
 }
 
 /** Possible hub containers, never an assignment of a puzzle ID to an active spawn. */

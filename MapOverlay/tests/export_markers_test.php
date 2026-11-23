@@ -117,6 +117,13 @@ Check(array_keys((array)$mysteryData['markers']) === [21, 22, 40], 'Solved Myste
 Check($mysteryData['markers']->{21}['label'] === 'Logic Grid #21 (Mystery)' && $mysteryData['markers']->{21}['family'] === 'mystery'
     && $mysteryData['markers']->{21}['group'] === 'static' && $mysteryData['markers']->{22}['label'] === 'Logic Grid #22',
     'Mysteries must join the fixed-location group and be labelled; other puzzles keep their labels.');
+$near = (object)['x' => 100, 'y' => 100, 'z' => 0]; $far = (object)['x' => 9000, 'y' => 9000, 'z' => 0];
+$zoned = [Entry(50, 'static', 'logicGrid', [$near]), Entry(51, 'hub', 'logicGrid', [$far]), Entry(52, 'mystery', 'logicGrid', [$far])];
+$zoned[0]->zoneIndex = '4'; $zoned[1]->zoneIndex = '6'; $zoned[2]->zoneIndex = '7';
+$zonedMarkers = BuildOverlayData($zoned, [], [50, 52], [51])['markers'];
+Check($zonedMarkers->{52}['zoneIndex'] === 6 && $zonedMarkers->{52}['zoneInferredFrom'] === 51
+    && $zonedMarkers->{50}['zoneIndex'] === 4 && !isset($zonedMarkers->{50}['zoneInferredFrom']),
+    'Mysteries must take the zone of the nearest non-Mystery puzzle; other puzzles keep their own zone.');
 Check(count((array)BuildFixedMarkers([], [])) === 0, 'An empty marker set must remain an object.');
 try {
     BuildFixedMarkers([Entry(1, 'static', 'logicGrid', [$point]), Entry(1, 'static', 'logicGrid', [$point])], []);
