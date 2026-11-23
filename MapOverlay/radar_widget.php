@@ -381,11 +381,14 @@ function BuildRadarWidget(object $base, array $index): array
         'SSRadarProgressAvailable' => false, 'SSRadarMapProgressDirty' => true] as $n => $v) { $b->scalar('Bool', $n, $v ? 1 : 0); }
     foreach (range(1, 5) as $relic) { $b->scalar('Bool', 'SSRadarPentadFound' . $relic, 0); }
     $b->scalar('Bool', 'SSRadarAvailabilityReady', 0);
-    $b->scalar('Int', 'SSRadarAvailabilityMask', 0);
     $b->objectField('SSRadarAvailabilitySource', $b->native['PuzzleDatabase']);
     $b->objectField('SSRadarAvailabilityWorld', $b->native['GameModeBase']);
     $b->objectField('SSRadarAvailabilityPlayer', $b->native['SophiaCharacter']);
-    foreach (['SSRadarAvailabilityZoneCursor' => 2, 'SSRadarAvailabilityLifespan' => 0, 'SSRadarAvailabilityQueriesLastRefresh' => 0, 'SSRadarAvailabilityQueriesTotal' => 0] as $n => $v) { $b->scalar('Int', $n, $v); }
+    foreach (['SSRadarAvailabilityZoneCursor' => 2, 'SSRadarAvailabilityTypeCursor' => 0, 'SSRadarAvailabilityLifespan' => 0, 'SSRadarAvailabilityQueriesLastRefresh' => 0, 'SSRadarAvailabilityQueriesTotal' => 0] as $n => $v) { $b->scalar('Int', $n, $v); }
+    // The zone being collected, one Hub-capable type per refresh, and whether any part was unknown.
+    $b->arrayField('Object', 'SSRadarAvailabilityWork', []);
+    $b->class->LoadedProperties[array_key_last($b->class->LoadedProperties)]->Inner->PropertyClass = $b->native['PuzzleData'];
+    $b->scalar('Bool', 'SSRadarAvailabilityWorkUnknown', 0);
     foreach (range(2, 6) as $zone) {
         $b->scalar('Bool', 'SSRadarAvailabilityZoneReady' . $zone, 0);
         $b->arrayField('Object', 'SSRadarAvailableZone' . $zone, []);
@@ -505,47 +508,59 @@ function BuildRadarWidget(object $base, array $index): array
     $worldAnchor = static fn(): object => $b->call('GameplayStatics', 'GetGameMode', [FilterExpr('Self')]);
     $availabilityPlayer = static fn(): object => FilterExpr('DynamicCast', ['ClassPtr' => $b->native['SophiaCharacter'], 'TargetExpression' => $b->call('GameplayStatics', 'GetPlayerCharacter', [FilterExpr('Self'), $i(0)])]);
     $availabilityInvalidate = [...$clear, $setBool('SSRadarMapProgressDirty', $bool(true)), $revise()];
-    $availabilityReset = [$set('SSRadarAvailabilityZoneCursor', $i(2))];
+    $restartZone = [$set('SSRadarAvailabilityTypeCursor', $i(0)), $array('Array_Clear', $state('SSRadarAvailabilityWork')), $setBool('SSRadarAvailabilityWorkUnknown', $bool(false))];
+    $availabilityReset = [$set('SSRadarAvailabilityZoneCursor', $i(2)), ...$restartZone];
     foreach (range(2, 6) as $zone) { $availabilityReset = [...$availabilityReset, $setBool('SSRadarAvailabilityZoneReady' . $zone, $bool(false)), $array('Array_Clear', $state('SSRadarAvailableZone' . $zone))]; }
+    // The cache covers every Hub-capable type, whatever is selected, so selecting a type
+    // never starts from an empty (fail-visible) cache and briefly shows inactive Hub puzzles.
     $availabilityKeyChanged = $math('BooleanOR',
         $math('BooleanOR', $math('NotEqual_ObjectObject', $p('Player'), $state('SSRadarAvailabilityPlayer')), $math('BooleanOR', $math('NotEqual_ObjectObject', $p('Source'), $state('SSRadarAvailabilitySource')), $math('NotEqual_ObjectObject', $p('World'), $state('SSRadarAvailabilityWorld')))),
-        $math('BooleanOR', $math('NotEqual_IntInt', $state('SSRadarSelectedMask'), $state('SSRadarAvailabilityMask')),
-            $math('BooleanOR', $math('NotEqual_IntInt', $p('Lifespan'), $state('SSRadarAvailabilityLifespan')), $math('Not_PreBool', $math('EqualEqual_BoolBool', $p('Ready'), $state('SSRadarAvailabilityReady'))))));
+        $math('BooleanOR', $math('NotEqual_IntInt', $p('Lifespan'), $state('SSRadarAvailabilityLifespan')), $math('Not_PreBool', $math('EqualEqual_BoolBool', $p('Ready'), $state('SSRadarAvailabilityReady')))));
     $availabilityRefresh = [$set('SSRadarAvailabilityQueriesLastRefresh', $i(0)),
         $availabilityLet('Source', $database()), $availabilityLet('World', $worldAnchor()), $availabilityLet('Player', $availabilityPlayer()), $availabilityLet('Lifespan', $i(0)),
         FilterExpr('LetBool', ['VariableExpression' => $p('Ready'), 'AssignmentExpression' => $bool(false)]),
         $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('Source')]), 'Key'),
         $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('World')]), 'Key'),
         $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('Player')]), 'Key'),
-        $unless($math('NotEqual_IntInt', $math('And_IntInt', $state('SSRadarSelectedMask'), $i($hubMask)), $i(0)), 'Key'),
+        ...($hubTypeKeys === [] ? [$jump('Key')] : []),
         $unless($availabilityProperty($p('Source'), 'PuzzleDatabase', 'bInitialized'), 'Key'),
         $availabilityLet('Lifespan', $availabilityProperty($p('Source'), 'PuzzleDatabase', 'groupLifespan')),
         $unless($math('Greater_IntInt', $p('Lifespan'), $i(0)), 'Key'),
         FilterExpr('LetBool', ['VariableExpression' => $p('Ready'), 'AssignmentExpression' => $bool(true)]),
         ['label' => 'Key'], $unless($availabilityKeyChanged, 'KeyReady'),
-        $set('SSRadarAvailabilitySource', $p('Source')), $set('SSRadarAvailabilityWorld', $p('World')), $set('SSRadarAvailabilityPlayer', $p('Player')), $set('SSRadarAvailabilityMask', $state('SSRadarSelectedMask')),
+        $set('SSRadarAvailabilitySource', $p('Source')), $set('SSRadarAvailabilityWorld', $p('World')), $set('SSRadarAvailabilityPlayer', $p('Player')),
         $set('SSRadarAvailabilityLifespan', $p('Lifespan')), $setBool('SSRadarAvailabilityReady', $p('Ready')),
         ...$availabilityReset, ...$availabilityInvalidate,
-        ['label' => 'KeyReady'], $unless($p('Ready'), 'Done')];
+        ['label' => 'KeyReady'], $unless($p('Ready'), 'Done'),
+        // One native query per refresh: the next Hub-capable type in the current zone.
+        $availabilityLet('ZoneByte', $math('Conv_IntToByte', $state('SSRadarAvailabilityZoneCursor')))];
+    foreach ($hubTypeKeys as $hubType => $key) {
+        $availabilityRefresh = [...$availabilityRefresh, $unless($math('EqualEqual_IntInt', $state('SSRadarAvailabilityTypeCursor'), $i($hubType)), 'Type' . ($hubType + 1)),
+            $availabilityLet('Part', $b->method($p('Source'), 'PuzzleDatabase', 'GetAllActiveSandboxPuzzleDataOfTypeInZone', [FilterExpr('StringConst', ['Value' => $key]), $p('ZoneByte'), $bool(true)], FilterPointer($fn, 'Part'))),
+            $jump('Queried'), ['label' => 'Type' . ($hubType + 1)]];
+    }
+    // A cursor out of range (never expected) restarts the zone without querying.
+    $availabilityRefresh = [...$availabilityRefresh, ...$restartZone, $jump('Done'),
+        ['label' => 'Queried'],
+        $set('SSRadarAvailabilityQueriesLastRefresh', $i(1)), $set('SSRadarAvailabilityQueriesTotal', $math('Add_IntInt', $state('SSRadarAvailabilityQueriesTotal'), $i(1))),
+        $unless($math('Not_PreBool', $array('Array_Contains', $p('Part'), FilterExpr('ObjectConst', ['Value' => 0]))), 'PartUnknown'),
+        $array('Array_Append', $state('SSRadarAvailabilityWork'), $p('Part')), $jump('PartDone'),
+        ['label' => 'PartUnknown'], $setBool('SSRadarAvailabilityWorkUnknown', $bool(true)),
+        ['label' => 'PartDone'], $set('SSRadarAvailabilityTypeCursor', $math('Add_IntInt', $state('SSRadarAvailabilityTypeCursor'), $i(1))),
+        $unless($math('GreaterEqual_IntInt', $state('SSRadarAvailabilityTypeCursor'), $i(count($hubTypeKeys))), 'Done'),
+        // Every type of this zone is in: publish the zone's union and move on.
+        $availabilityLet('Objects', $state('SSRadarAvailabilityWork')), FilterExpr('LetBool', ['VariableExpression' => $p('Unknown'), 'AssignmentExpression' => $state('SSRadarAvailabilityWorkUnknown')]), ...$restartZone];
     foreach (range(2, 6) as $zone) {
-        // One zone per refresh: union the native results of every selected Hub-capable type.
-        $zoneQueries = [$array('Array_Clear', $p('Objects'))];
-        foreach ($hubTypeKeys as $hubType => $key) {
-            $zoneQueries = [...$zoneQueries, $unless($math('NotEqual_IntInt', $math('And_IntInt', $state('SSRadarSelectedMask'), $i(OverlayTypeBit($key))), $i(0)), 'Query' . $zone . '_' . ($hubType + 1)),
-                $availabilityLet('Part', $b->method($p('Source'), 'PuzzleDatabase', 'GetAllActiveSandboxPuzzleDataOfTypeInZone', [FilterExpr('StringConst', ['Value' => $key]), FilterExpr('ByteConst', ['Value' => $zone]), $bool(true)], FilterPointer($fn, 'Part'))),
-                $array('Array_Append', $p('Objects'), $p('Part')), ['label' => 'Query' . $zone . '_' . ($hubType + 1)]];
-        }
         $availabilityRefresh = [...$availabilityRefresh, $unless($math('EqualEqual_IntInt', $state('SSRadarAvailabilityZoneCursor'), $i($zone)), 'Zone' . ($zone + 1)),
-            ...$zoneQueries,
-            $set('SSRadarAvailabilityQueriesLastRefresh', $i(1)), $set('SSRadarAvailabilityQueriesTotal', $math('Add_IntInt', $state('SSRadarAvailabilityQueriesTotal'), $i(1))),
-            $unless($math('Not_PreBool', $array('Array_Contains', $p('Objects'), FilterExpr('ObjectConst', ['Value' => 0]))), 'Unknown' . $zone),
+            $unless($math('Not_PreBool', $p('Unknown')), 'Unknown' . $zone),
             $unless($math('BooleanAND', $state('SSRadarAvailabilityZoneReady' . $zone), $array('Array_Identical', $p('Objects'), $state('SSRadarAvailableZone' . $zone))), 'Changed' . $zone), $jump('Advance' . $zone),
             ['label' => 'Changed' . $zone], $set('SSRadarAvailableZone' . $zone, $p('Objects')), $setBool('SSRadarAvailabilityZoneReady' . $zone, $bool(true)), ...$availabilityInvalidate, $jump('Advance' . $zone),
             ['label' => 'Unknown' . $zone], $unless($state('SSRadarAvailabilityZoneReady' . $zone), 'Advance' . $zone),
             $setBool('SSRadarAvailabilityZoneReady' . $zone, $bool(false)), $array('Array_Clear', $state('SSRadarAvailableZone' . $zone)), ...$availabilityInvalidate,
             ['label' => 'Advance' . $zone], $set('SSRadarAvailabilityZoneCursor', $i($zone === 6 ? 2 : $zone + 1)), $jump('Done'), ['label' => 'Zone' . ($zone + 1)]];
     }
-    $b->define('SSRadarRefreshAvailability', [], ['Source' => 'Object', 'World' => 'Object', 'Player' => 'Object', 'Lifespan' => 'Int', 'Ready' => 'Bool', 'Objects' => 'Array', 'Part' => 'Array'], [...$availabilityRefresh, ['label' => 'Done']]);
+    $availabilityRefresh = [...$availabilityRefresh, $set('SSRadarAvailabilityZoneCursor', $i(2))];
+    $b->define('SSRadarRefreshAvailability', [], ['Source' => 'Object', 'World' => 'Object', 'Player' => 'Object', 'Lifespan' => 'Int', 'Ready' => 'Bool', 'Unknown' => 'Bool', 'ZoneByte' => 'Byte', 'Objects' => 'Array', 'Part' => 'Array'], [...$availabilityRefresh, ['label' => 'Done']]);
     foreach ($b->asset->Exports[$fn - 1]->LoadedProperties as $property) {
         if ($property->Name === 'Source') { $property->PropertyClass = $b->native['PuzzleDatabase']; }
         if ($property->Name === 'World') { $property->PropertyClass = $b->native['GameModeBase']; }
@@ -558,7 +573,6 @@ function BuildRadarWidget(object $base, array $index): array
     $availabilityQuery = [$unless($math('Greater_IntInt', $p('PuzzleId'), $i(0)), 'Visible'),
         $unless($math('BooleanAND', $math('GreaterEqual_IntInt', $p('AvailabilityZone'), $i(2)), $math('LessEqual_IntInt', $p('AvailabilityZone'), $i(6))), 'Visible'),
         $unless($state('SSRadarAvailabilityReady'), 'Visible'),
-        $unless($math('EqualEqual_IntInt', $state('SSRadarAvailabilityMask'), $state('SSRadarSelectedMask')), 'Visible'),
         $availabilityLet('Source', $database()), $availabilityLet('World', $worldAnchor()), $availabilityLet('Player', $availabilityPlayer()),
         $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('Source')]), 'Visible'),
         $unless($b->call('KismetSystemLibrary', 'IsValid', [$p('World')]), 'Visible'),
@@ -1030,10 +1044,11 @@ function BuildRadarWidget(object $base, array $index): array
             'zoneArray' => 'SSRadarHubAvailabilityZones', 'eligiblePuzzleIds' => count($hubPuzzleIds), 'eligiblePoints' => $hubPoints,
             'eligibleTypeTags' => array_keys($hubTypeTags), 'eligibleTypeKeys' => $hubTypeKeys, 'eligibleTypeMask' => $hubMask, 'zones' => array_keys($hubZones),
             'authority' => 'PuzzleDatabase.GetAllActiveSandboxPuzzleDataOfTypeInZone', 'queryLimitPerRefresh' => 1,
-            'nativeCallsPerZoneQuery' => 'one per selected Hub-capable type, appended into the zone cache', 'nativeCallLimitPerRefresh' => count($hubTypeKeys),
-            'refreshZones' => [2, 3, 4, 5, 6], 'fullSweepRefreshCalls' => 5, 'sandboxProgressionRelevant' => true,
+            'nativeCallsPerZoneQuery' => 'one per Hub-capable type, selected or not, across successive refreshes; the zone is published once all are in', 'nativeCallLimitPerRefresh' => 1,
+            'refreshZones' => [2, 3, 4, 5, 6], 'fullSweepRefreshCalls' => 5 * count($hubTypeKeys), 'sandboxProgressionRelevant' => true,
             'readinessFields' => ['PuzzleDatabase.bInitialized', 'PuzzleDatabase.groupLifespan'],
-            'cacheIdentity' => ['local character', 'GameMode world anchor', 'database instance', 'selected type mask', 'group lifespan'], 'cacheKeyField' => 'SSRadarAvailabilityMask',
+            'cacheIdentity' => ['local character', 'GameMode world anchor', 'database instance', 'group lifespan'], 'independentOfSelection' => true,
+            'cursorFields' => ['SSRadarAvailabilityZoneCursor', 'SSRadarAvailabilityTypeCursor'], 'workFields' => ['SSRadarAvailabilityWork', 'SSRadarAvailabilityWorkUnknown'],
             'unreadyOrUnknownReturnsAvailable' => true, 'nullPuzzleDataReturnsAvailable' => true, 'emptyResultIsReadinessSignal' => false],
         'activePentad' => ['selectedType' => 'seek5', 'selectionRule' => 'seek5 bit set in SSRadarSelectedMask; relic rules apply to seek5 points only', 'refreshFunction' => 'SSRadarRefreshPentadFocus', 'focusField' => 'SSRadarFocusPuzzleId',
             'authority' => 'SophiaCharacter.CharPuzzleComponent.GetCurrentSeek5', 'stateFunction' => 'Seek5.GetState', 'activeState' => 1,

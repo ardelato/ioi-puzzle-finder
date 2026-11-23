@@ -16,6 +16,9 @@
   displayed name.
 - Restyle the panel: solid backdrop, gold diamond checkboxes, switches, game-
   style buttons and range / size choices on the Radar tab.
+- Stop inactive Hub puzzles flashing on the map after ticking a type: Hub
+  availability is now tracked for every Hub type in the background instead of
+  restarting on each selection change.
 
 ## 0.1.0-beta.1
 

@@ -15,6 +15,9 @@ ordinary save backup before testing; no debug save or console command is needed.
 - Enable the radar, close the map and move/turn. Check F8, F3, F4 and F10,
   radius text, screen size and height carets. Open menus and a puzzle input
   screen; the radar should hide and resume appropriately.
+- After a few seconds of play, open the map and tick a Hub type (e.g.
+  Matchbox). Only currently active Hub puzzles should appear, with no brief
+  burst of extra pins.
 - Solve a visible puzzle. Its map and radar pins should disappear without a
   rebuild. For Matchboxes, both pins should disappear together.
 - Activate a Hidden Pentad. Confirm the radar focuses on its relics. Collect

@@ -74,10 +74,34 @@ CheckRadarHud($textureNames === array_map(static fn(string $key): string => GetO
 $scanCode = json_encode([$radarFunctions['SSRadarScan']->ScriptBytecode, $radarFunctions['SSRadarStartScan']->ScriptBytecode], JSON_THROW_ON_ERROR);
 CheckRadarHud(str_contains($scanCode, '"SSRadarTypeBits"') && str_contains($scanCode, '"SSRadarSelectedMask"') && str_contains($scanCode, '"SSRadarScanType"') && str_contains($scanCode, '"SSRadarMinRow"'), 'Radar scan must walk every type selected in SSRadarSelectedMask.');
 CheckRadarHud(str_contains(json_encode($radarFunctions['SSRadarRender']->ScriptBytecode, JSON_THROW_ON_ERROR), '"SSRadarTypeTextures"') && isset($radarFields['SSRadarPinType23']) && $radarDefaults['SSRadarPinType0']->Value === -1, 'Radar pins must take icons from their own point type with a per-pin cache.');
-CheckRadarHud(!isset($radarFields['SSRadarHubTypeTags']) && isset($radarFields['SSRadarAvailabilityMask']) && !isset($radarFields['SSRadarAvailabilityTag']), 'Hub availability must be keyed on the selection mask.');
+// Hub availability covers every Hub-capable type, so a selection change never empties it
+// (an empty cache is fail-visible and flashed inactive Hub puzzles on the map).
+CheckRadarHud(!isset($radarFields['SSRadarHubTypeTags']) && !isset($radarFields['SSRadarAvailabilityMask']) && !isset($radarFields['SSRadarAvailabilityTag'])
+    && isset($radarFields['SSRadarAvailabilityTypeCursor'], $radarFields['SSRadarAvailabilityWork'], $radarFields['SSRadarAvailabilityWorkUnknown']), 'Hub availability must not be keyed on the selection.');
+foreach (['SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable'] as $availabilityFunction) {
+    CheckRadarHud(!str_contains(json_encode($radarFunctions[$availabilityFunction]->ScriptBytecode, JSON_THROW_ON_ERROR), '"Path":["SSRadarSelectedMask"]'), "{$availabilityFunction} must not depend on the selected types.");
+}
+// Visit every imported native call in some bytecode as (name, call node).
+$eachCall = static function (mixed $code, callable $visit) use ($radar): void {
+    $walk = static function (mixed $value) use (&$walk, $visit, $radar): void {
+        if (is_object($value)) {
+            if (isset($value->StackNode) && is_int($value->StackNode) && $value->StackNode < 0) { $visit($radar->Imports[-1 - $value->StackNode]->ObjectName, $value); }
+            foreach ((array)$value as $child) { $walk($child); }
+        } elseif (is_array($value)) { foreach ($value as $child) { $walk($child); } }
+    };
+    $walk($code);
+};
+$availabilityCalls = 0;
+$eachCall($radarFunctions['SSRadarRefreshAvailability']->ScriptBytecode, static function (string $name, object $call) use (&$availabilityCalls): void {
+    if ($name !== 'GetAllActiveSandboxPuzzleDataOfTypeInZone') { return; }
+    $availabilityCalls++;
+    CheckRadarHud(str_contains($call->Parameters[1]->{'$type'}, 'EX_LocalVariable') && $call->Parameters[1]->Variable->New->Path === ['ZoneByte'], 'Each Hub query must take the current zone cursor.');
+});
 $refreshCode = json_encode($radarFunctions['SSRadarRefreshAvailability']->ScriptBytecode, JSON_THROW_ON_ERROR);
 CheckRadarHud($radarManifest['hubAvailability']['eligibleTypeMask'] === (OverlayTypeBit('hiddenCube') | OverlayTypeBit('matchbox'))
-    && substr_count($refreshCode, '"Value":"hiddenCube"') === 5 && substr_count($refreshCode, '"Value":"matchbox"') === 5 && !str_contains($refreshCode, '"Value":"seek5"'), 'Hub refresh must query each selected Hub-capable type once per zone.');
+    && substr_count($refreshCode, '"Value":"hiddenCube"') === 1 && substr_count($refreshCode, '"Value":"matchbox"') === 1 && !str_contains($refreshCode, '"Value":"seek5"')
+    && $availabilityCalls === 2 && $radarManifest['hubAvailability']['fullSweepRefreshCalls'] === 10 && $radarManifest['hubAvailability']['nativeCallLimitPerRefresh'] === 1,
+    'Hub refresh must query one Hub-capable type per call, cycling every type through every zone.');
 $values = static fn(string $name): array => array_map(static fn(object $v): int => $v->Value, $radarDefaults[$name]->Value);
 CheckRadarHud($values('SSRadarCountIds') === [101, 9001, 102, 9002] && $values('SSRadarCountSlots') === [OverlayCatalogSlot('hiddenCube'), OverlayCatalogSlot('hiddenCube'), OverlayCatalogSlot('matchbox'), OverlayCatalogSlot('matchbox')]
     && $values('SSRadarCountHub') === [0, 1, 0, 1], 'Zone counts must list each puzzle once (pairs share an ID), by zone and type, flagging Hub puzzles.');
