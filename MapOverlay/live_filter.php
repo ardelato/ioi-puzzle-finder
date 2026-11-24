@@ -42,7 +42,7 @@ function AddOverlayLiveProgress(object $asset, object $class, object $default, i
         $functions[] = $name;
         return $index;
     };
-    foreach (['PuzzleId' => 'SaveStats.Puzzle.', 'PentadRelicIndex' => 'SaveStats.PentadRelic.', 'HubAvailabilityZone' => 'SaveStats.HubZone.'] as $key => $prefix) {
+    foreach (['PuzzleId' => 'SaveStats.Puzzle.', 'PentadRelicIndex' => 'SaveStats.PentadRelic.', 'HubAvailabilityZone' => 'SaveStats.HubZone.', 'SiteNumber' => 'SaveStats.Site.'] as $key => $prefix) {
         $fn = count($asset->Exports) + 1;
         $l = static fn(string $name): object => FilterVariable($fn, $name);
         $let = static fn(string $name, object $value): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $name), 'Variable' => $l($name), 'Expression' => $value]);
@@ -81,16 +81,23 @@ function AddOverlayLiveProgress(object $asset, object $class, object $default, i
     $l = static fn(string $name): object => FilterVariable($fn, $name);
     $actor = $field('Object', 'PuzzleActor', 'CPF_Parm');
     $actor->PropertyClass = $native['Actor'];
-    $native['IsActorAvailable'] = $append('SSOverlayIsActorAvailable', [$actor, $field('Bool', 'ReturnValue', 'CPF_Parm, CPF_OutParm, CPF_ReturnParm'), $field('Int', 'PuzzleId'), $field('Int', 'AvailabilityZone')], [
+    $native['IsActorAvailable'] = $append('SSOverlayIsActorAvailable', [$actor, $field('Bool', 'ReturnValue', 'CPF_Parm, CPF_OutParm, CPF_ReturnParm'), $field('Int', 'PuzzleId'), $field('Int', 'AvailabilityZone'), $field('Int', 'SiteNumber')], [
+        // A random-spot site shows only while the radar has seen a live puzzle standing on it.
+        FilterExpr('Let', ['Value' => FilterPointer($fn, 'SiteNumber'), 'Variable' => $l('SiteNumber'), 'Expression' => FilterCall($native['SiteNumber'], [$l('PuzzleActor')], 'LocalFinalFunction')]),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Ordinary', 'BooleanExpression' => FilterCall($native['Greater_IntInt'], [$l('SiteNumber'), $int(0)])]),
+        FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Hidden', 'BooleanExpression' => FilterCall($native['IsValid'], [$s('SSOverlayRadarState')])]),
+        FilterExpr('Return', ['ReturnExpression' => FilterContext($s('SSOverlayRadarState'), FilterExpr('VirtualFunction', ['VirtualFunctionName' => 'SSRadarIsSiteLive', 'Parameters' => [$l('SiteNumber')]]), FilterPointer($fn, 'ReturnValue'))]),
+        ['label' => 'Ordinary'],
         FilterExpr('Let', ['Value' => FilterPointer($fn, 'AvailabilityZone'), 'Variable' => $l('AvailabilityZone'), 'Expression' => FilterCall($native['HubAvailabilityZone'], [$l('PuzzleActor')], 'LocalFinalFunction')]),
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Visible', 'BooleanExpression' => FilterCall($native['Greater_IntInt'], [$l('AvailabilityZone'), $int(0)])]),
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Visible', 'BooleanExpression' => FilterCall($native['IsValid'], [$s('SSOverlayRadarState')])]),
         FilterExpr('Let', ['Value' => FilterPointer($fn, 'PuzzleId'), 'Variable' => $l('PuzzleId'), 'Expression' => FilterCall($native['PuzzleId'], [$l('PuzzleActor')], 'LocalFinalFunction')]),
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Visible', 'BooleanExpression' => FilterCall($native['Greater_IntInt'], [$l('PuzzleId'), $int(0)])]),
         FilterExpr('Return', ['ReturnExpression' => FilterContext($s('SSOverlayRadarState'), FilterExpr('VirtualFunction', ['VirtualFunctionName' => 'SSRadarIsPuzzleAvailable', 'Parameters' => [$l('PuzzleId'), $l('AvailabilityZone')]]), FilterPointer($fn, 'ReturnValue'))]),
-        ['label' => 'Visible'], FilterExpr('Return', ['ReturnExpression' => FilterExpr('True')]), FilterExpr('EndOfScript'),
+        ['label' => 'Visible'], FilterExpr('Return', ['ReturnExpression' => FilterExpr('True')]),
+        ['label' => 'Hidden'], FilterExpr('Return', ['ReturnExpression' => FilterExpr('False')]), FilterExpr('EndOfScript'),
     ]);
-    $asset->NameMap = array_merge($asset->NameMap, ['SSRadarIsPuzzleAvailable', 'SSRadarRefreshAvailability']);
+    $asset->NameMap = array_merge($asset->NameMap, ['SSRadarIsPuzzleAvailable', 'SSRadarRefreshAvailability', 'SSRadarIsSiteLive']);
     $fn = count($asset->Exports) + 1;
     $l = static fn(string $name): object => FilterVariable($fn, $name);
     $actor = $field('Object', 'PuzzleActor', 'CPF_Parm');
