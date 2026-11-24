@@ -6,6 +6,7 @@ require_once __DIR__ . '/paths.php';
 
 require_once dirname(__DIR__) . '/radar_hud.php';
 require_once dirname(__DIR__) . '/radar_widget.php';
+require_once dirname(__DIR__) . '/radar_settings.php';
 
 function CheckRadarHud(bool $condition, string $message): void
 {
@@ -181,4 +182,72 @@ CheckRadarHud(count(array_filter($updateCode, static fn(object $e): bool => ($e-
 // The enabled/menu gate must not hide an empty selection: only the pin path branches on it.
 $selectionJumps = array_filter($updateCode, static fn(object $e): bool => str_contains($e->{'$type'}, 'EX_JumpIfNot') && str_contains(json_encode($e->BooleanExpression, JSON_THROW_ON_ERROR), '"SSRadarSelectedMask"'));
 CheckRadarHud(count($selectionJumps) === 1, 'An enabled radar must show with no puzzle type selected.');
-echo "HUD radar embedding checks passed: native functions, lifecycle host, input transparency, placement, duplicate rejection, the multi-type selection mask, and map markers.\n";
+
+// Rebindable keys: registration replaces every mapping of each radar action with exactly one.
+$codeOf = static fn(string $name): string => json_encode($radarExports[$name]->ScriptBytecode, JSON_THROW_ON_ERROR);
+$callsTo = static function (string $function) use ($radarExports, $eachCall): array {
+    $calls = [];
+    $eachCall($radarExports[$function]->ScriptBytecode, static function (string $name) use (&$calls): void { $calls[$name] = ($calls[$name] ?? 0) + 1; });
+    return $calls;
+};
+$register = $callsTo('SSRadarRegisterKeys');
+CheckRadarHud(($register['GetActionMappingByName'] ?? 0) === 4 && ($register['RemoveActionMapping'] ?? 0) === 4 && ($register['AddActionMapping'] ?? 0) === 4 && ($register['ForceRebuildKeymaps'] ?? 0) === 1,
+    'Key registration must clear stale mappings of every radar action before adding its current key, then rebuild once.');
+$construct = $codeOf('Construct');
+CheckRadarHud(str_contains($construct, '"StackNode":' . $exportIndex('SSRadarRegisterKeys') . ',') && !str_contains($construct, 'AddActionMapping') && substr_count($construct, '"FunctionName":"SSRadarInput') === 4, 'Construct must register the current keys and listen for every action.');
+$rebind = $radarExports['SSRadarRebind'];
+CheckRadarHud(array_column(array_slice($rebind->LoadedProperties, 0, 2), 'Name') === ['Action', 'InputKey'] && $radar->Imports[-1 - $rebind->LoadedProperties[1]->Struct]->ObjectName === 'Key'
+    && str_contains($rebind->LoadedProperties[1]->PropertyFlags, 'CPF_Parm'), 'SSRadarRebind must take (Int Action, FKey InputKey).');
+$rebindCalls = $callsTo('SSRadarRebind');
+CheckRadarHud(($rebindCalls['EqualEqual_KeyKey'] ?? 0) === 16 && str_contains($codeOf('SSRadarRebind'), '"Path":["SSRadarRebindSwap"]')
+    && str_contains($codeOf('SSRadarRebind'), '"StackNode":' . $exportIndex('SSRadarRegisterKeys') . ',') && str_contains($codeOf('SSRadarRebind'), '"StackNode":' . $exportIndex('SSRadarSaveSettings') . ','),
+    'Rebinding must compare against every other action (a clash swaps), re-register and save.');
+CheckRadarHud($radarDefaults['SSRadarRebindSwap']->Value === -1 && $radarDefaults['SSRadarHideDone']->Value === 0, 'Rebind swap starts at -1; Hide completed starts off.');
+foreach (RadarShortcutActions() as $action => [$actionName, $key]) {
+    $mapping = array_column($radarDefaults['SSRadarKey' . $action]->Value, null, 'Name');
+    CheckRadarHud($mapping['ActionName']->Value === $actionName && $mapping['Key']->Value[0]->Value === $key, "SSRadarKey{$action} must default to {$key}.");
+    CheckRadarHud(str_contains($codeOf('SSRadarResetKeys'), '"Value":"' . $key . '"'), "Reset must restore {$key}.");
+}
+// Saved settings: own slot, loaded once before the first view, saved by every change.
+$save = $codeOf('SSRadarSaveSettings');
+$load = $codeOf('SSRadarLoadSettings');
+CheckRadarHud(str_contains($save, '"Value":"' . RADAR_SETTINGS_SLOT . '"') && ($callsTo('SSRadarSaveSettings')['SaveGameToSlot'] ?? 0) === 1 && ($callsTo('SSRadarSaveSettings')['CreateSaveGameObject'] ?? 0) === 1, 'Settings must be written to the radar slot.');
+foreach (array_keys(RadarSettingsFields()) as $field) {
+    CheckRadarHud(str_contains($save, '"Path":["' . $field . '"]') && str_contains($load, '"Path":["' . $field . '"]'), "Settings field {$field} must be saved and restored.");
+}
+CheckRadarHud(str_contains($load, '"Value":"' . RadarSettingsCatalogKey() . '"') && ($callsTo('SSRadarLoadSettings')['Key_IsValid'] ?? 0) === 4 && !str_contains($load, '"Path":["SSRadarRevision"]'),
+    'Loading must drop masks from another catalog, keep defaults for unknown keys, and leave the revision untouched.');
+CheckRadarHud($radarExports['OnInitialized']->ScriptBytecode[0]->StackNode === $exportIndex('SSRadarLoadSettings'), 'Settings must load before the first view is applied.');
+foreach ($radarManifest['settings']['savedBy'] as $writer) {
+    CheckRadarHud(str_contains($codeOf($writer), '"StackNode":' . $exportIndex('SSRadarSaveSettings') . ','), "{$writer} must save the settings.");
+}
+$settingsClassImport = $importNamed(RADAR_SETTINGS_CLASS, 'BlueprintGeneratedClass');
+CheckRadarHud($outerName($settingsClassImport) === RADAR_SETTINGS_PACKAGE, 'The radar must use the settings SaveGame class.');
+$settingsAsset = BuildRadarSettingsAsset($radarBase);
+$settingsExports = array_column($settingsAsset->Exports, null, 'ObjectName');
+CheckRadarHud(count($settingsAsset->Exports) === 2 && isset($settingsExports[RADAR_SETTINGS_CLASS], $settingsExports['Default__' . RADAR_SETTINGS_CLASS])
+    && $settingsAsset->Imports[-1 - $settingsExports[RADAR_SETTINGS_CLASS]->SuperStruct]->ObjectName === 'SaveGame', 'Settings asset must be one SaveGame subclass and its defaults.');
+CheckRadarHud(array_column($settingsExports[RADAR_SETTINGS_CLASS]->LoadedProperties, 'Name') === array_keys(RadarSettingsFields())
+    && array_column($settingsExports['Default__' . RADAR_SETTINGS_CLASS]->Data, 'Value', 'Name')['KeyToggle'] === 'F8', 'Settings fields and defaults must match the schema.');
+if (in_array('--native-roundtrip', $argv, true)) {
+    $directory = __DIR__ . '/.radar-test-' . bin2hex(random_bytes(5));
+    mkdir($directory);
+    try {
+        foreach (['settings' => $settingsAsset, 'radar' => $radar] as $label => $asset) {
+            file_put_contents($directory . "/{$label}.json", json_encode($asset, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+            foreach ([['fromjson', $directory . "/{$label}.json", $directory . "/{$label}.uasset"], ['tojson', $directory . "/{$label}.uasset", $directory . "/{$label}-roundtrip.json", 'VER_UE4_27']] as $toolArguments) {
+                $pipes = [];
+                $process = proc_open([OverlayTestAssetGui(), ...$toolArguments], [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+                fclose($pipes[0]);
+                $toolOutput = stream_get_contents($pipes[1]) . stream_get_contents($pipes[2]);
+                fclose($pipes[1]); fclose($pipes[2]);
+                CheckRadarHud(proc_close($process) === 0, "Native {$label} round-trip failed: {$toolOutput}");
+            }
+        }
+        echo "Native radar and settings round-trips passed.\n";
+    } finally {
+        foreach (glob($directory . '/*') as $path) { @unlink($path); }
+        @rmdir($directory);
+    }
+}
+echo "HUD radar embedding checks passed: native functions, lifecycle host, input transparency, placement, duplicate rejection, the multi-type selection mask, map markers, rebindable keys and saved settings.\n";

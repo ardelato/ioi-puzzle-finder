@@ -51,20 +51,29 @@ shortcut keys.
 
 ## Radar controls
 
-| Key | Action |
+| Default key | Action |
 | --- | --- |
 | **F8** | Show or hide the radar |
 | **F3** | Zoom in |
 | **F4** | Zoom out |
 | **F10** | Cycle the display size |
 
+To change a key, open the map's **Radar** tab, click the key next to the
+action and press the new one. **Esc** cancels; mouse buttons and Shift, Ctrl,
+Alt or Cmd on their own are not accepted. Choosing a key another radar action
+already uses swaps the two. **Reset** restores the defaults. The radar does
+not check the game's own bindings, so avoid keys you use to play.
+
 The radar shows the ticked types, each pin with its type's icon. The distance
 under the radar is its radius. Up and down carets mark puzzles more than
 10 metres above or below you. Your custom map markers always appear: within
 range at their position, farther away as a cyan arrow on the rim with their
 distance. While enabled, the radar stays up even when no puzzle type is
-ticked. Settings last for the current session; a new
-session starts with nothing ticked. The radar hides during menus and puzzle
+ticked. The ticked types, **Show possible sites**, **Hide completed**, the
+radar switch, range, size and keys are saved as you change them and restored
+the next time you play. They are kept in `IOIPuzzleRadar.sav` in the game's
+`Saved\SaveGames` folder, apart from your progress save; delete that file to
+start over with the defaults. The radar hides during menus and puzzle
 input. Fixed puzzle pins follow live progress and clear when the game records
 a solve.
 

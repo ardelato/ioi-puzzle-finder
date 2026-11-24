@@ -15,6 +15,12 @@ ordinary save backup before testing; no debug save or console command is needed.
 - Enable the radar, close the map and move/turn. Check F8, F3, F4 and F10,
   radius text, screen size and height carets. Open menus and a puzzle input
   screen; the radar should hide and resume appropriately.
+- On the Radar tab, rebind Zoom in to another key and check it works in play.
+  Pick a key another radar action uses: the two should swap and the note
+  should say so. Esc while picking keeps the old key; **Reset** restores
+  F8 / F3 / F4 / F10.
+- Tick two types, change range, size and Hide completed, then quit and restart
+  the game. Everything, including rebound keys, should come back.
 - Place two custom map markers, one near and one far. The near one should show
   its icon at its position; the far one a rim arrow pointing at it with its
   distance, turning as you turn. Untick every type: the radar should stay up

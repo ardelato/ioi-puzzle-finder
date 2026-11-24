@@ -16,6 +16,12 @@
   displayed name.
 - Restyle the panel: solid backdrop, gold diamond checkboxes, switches, game-
   style buttons and range / size choices on the Radar tab.
+- Rebind the radar keys on the Radar tab: click a key and press a new one.
+  A key another radar action uses is swapped; **Reset** restores F8 / F3 /
+  F4 / F10.
+- Save settings between sessions: ticked types, possible sites, Hide
+  completed, the radar switch, range, size and keys are kept in their own
+  `IOIPuzzleRadar.sav` slot (never the progress save) and restored at start.
 - Show your custom map markers on the radar whatever types are selected: the
   map marker icon within range, otherwise a cyan rim arrow with the distance.
   An enabled radar now stays on screen with no puzzle type ticked.
