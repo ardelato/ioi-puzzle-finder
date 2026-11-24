@@ -7,6 +7,7 @@ require_once __DIR__ . '/radar_data.php';
 require_once __DIR__ . '/radar_special_completion.php';
 require_once __DIR__ . '/radar_labyrinth.php';
 require_once __DIR__ . '/radar_settings.php';
+require_once __DIR__ . '/radar_live_sites.php';
 
 /** Bytecode helpers kept separate from the established map generator. */
 function RadarExprSize(object $e): int
@@ -252,7 +253,7 @@ final class RadarWidgetBuilder
             $properties[] = $p;
         }
         if ($returnType !== null) {
-            if ($returnType !== 'Bool') { throw new InvalidArgumentException('Unsupported radar result type.'); }
+            if (!in_array($returnType, ['Bool', 'Int'], true)) { throw new InvalidArgumentException('Unsupported radar result type.'); }
             $properties[] = $this->field($returnType, 'ReturnValue', 'CPF_Parm, CPF_OutParm, CPF_ReturnParm');
         }
         foreach ($locals as $n => $kind) {
@@ -267,9 +268,10 @@ final class RadarWidgetBuilder
             }
             $properties[] = $p;
         }
-        $end = $returnType === 'Bool'
-            ? [FilterExpr('Return', ['ReturnExpression' => FilterExpr('False')]), FilterExpr('EndOfScript')]
-            : FilterReturn();
+        $end = match ($returnType) {
+            'Bool' => [FilterExpr('Return', ['ReturnExpression' => FilterExpr('False')]), FilterExpr('EndOfScript')],
+            'Int' => [FilterExpr('Return', ['ReturnExpression' => FilterExpr('IntConst', ['Value' => 0])]), FilterExpr('EndOfScript')],
+            default => FilterReturn() };
         $code = RadarCompile([...$parts, ...$end]);
         $fn = FilterFunction($this->functionTemplate, $i, 1, $name, $properties, []);
         $fn->ClassIndex = $this->native['Function'];
@@ -457,6 +459,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
     $b->arrayField('Name', 'SSRadarTypeTags', array_map(static fn(string $key): string => 'SaveStats.Type.' . $key, $index['typeKeys']));
     $b->arrayField('Int', 'SSRadarPointTypes', array_values($pointTypes));
     $b->arrayField('Int', 'SSRadarTypeBits', $typeBits);
+    AddRadarLiveSiteFields($b, $index);
     $texture = static function (string $name) use ($b): int {
         $package = OverlayImport($b->asset, '/Game/ASophia/UI/HUD/Markers/Textures/' . $name, 0, '/Script/CoreUObject', 'Package');
         return OverlayImport($b->asset, $name, $package, '/Script/Engine', 'Texture2D');
@@ -489,7 +492,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
             FilterStruct('ColorAndOpacity', 'SlateColor', [$linear('SpecifiedColor', 0.75, 0.94, 0.97, 1)]), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed')], 108, 108, 52, 16);
     }
     foreach (['SSRadarSetSelection', 'SSRadarSetView', 'SSRadarApplyView', 'SSRadarChangeZoom', 'SSRadarCycleSize', 'SSRadarToggleEnabled', 'SSRadarIsSolved', 'SSRadarAcknowledgeMapProgress',
-        'SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable', 'SSRadarRefreshPentadFocus', 'SSRadarIsPentadRelicVisible', 'SSRadarMatchesPentadFocus', 'SSRadarHandleShortcut', ...array_values($inputCallbacks),
+        'SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable', 'SSRadarRefreshSites', 'SSRadarSitePuzzle', 'SSRadarIsSiteLive', 'SSRadarRefreshPentadFocus', 'SSRadarIsPentadRelicVisible', 'SSRadarMatchesPentadFocus', 'SSRadarHandleShortcut', ...array_values($inputCallbacks),
         'SSRadarLoadSettings', 'SSRadarSaveSettings', 'SSRadarRegisterKeys', 'SSRadarRebind', 'SSRadarResetKeys', 'SSRadarSetHideDone', 'SSRadarApplyIcon', 'SSRadarStartScan', 'SSRadarScan', 'SSRadarRender', 'SSRadarRenderMarkers', 'SSRadarInitMaze', 'SSRadarRefreshMaze', 'SSRadarRenderMaze', 'SSRadarUpdate', 'SSRadarTick', 'OnInitialized', 'Construct', 'Destruct'] as $fn) { $b->reserve($fn); }
     $specialCompletion = AddRadarSpecialCompletion($b, $index['specialCompletions'] ?? []);
     $makeVec = static fn(object $x, object $y): object => $math('MakeVector2D', $x, $y);
@@ -641,6 +644,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         $type = ['Source' => 'PuzzleDatabase', 'World' => 'GameModeBase', 'Player' => 'SophiaCharacter', 'PuzzleData' => 'PuzzleData'][$property->Name] ?? null;
         if ($type !== null) { $property->PropertyClass = $b->native[$type]; }
     }
+    $liveSites = AddRadarLiveSiteFunctions($b, $index, $availabilityInvalidate);
     $fn = $b->functions['SSRadarRefreshPentadFocus'];
     $p = static fn(string $n): object => FilterVariable($fn, $n);
     $focusLet = static fn(string $n, object $v): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $v]);
@@ -842,6 +846,11 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         $array('Array_Get', $state('SSRadarSpawn'), $l('Point'), $l('Spawn')),
         $unless($math('BooleanOR', $state('SSRadarIncludeSites'), $math('EqualEqual_IntInt', $l('Spawn'), $i(0))), 'Loop'),
         $array('Array_Get', $state('SSRadarPuzzleIds'), $l('Point'), $l('PuzzleId')),
+        // A random-spot site counts only while a live puzzle of this point's type stands on it.
+        $unless($math('NotEqual_IntInt', $l('Spawn'), $i(0)), 'Fixed'),
+        $let('PuzzleId', $localCall('SSRadarSitePuzzle', [$l('Point')])),
+        $unless($math('Greater_IntInt', $l('PuzzleId'), $i(0)), 'Loop'),
+        ['label' => 'Fixed'],
         $unless($localCall('SSRadarMatchesPentadFocus', [$l('Point'), $l('PuzzleId')]), 'Loop'),
         $array('Array_Get', $state('SSRadarHubAvailabilityZones'), $l('Point'), $l('AvailabilityZone')),
         $unless($localCall('SSRadarIsPuzzleAvailable', [$l('PuzzleId'), $l('AvailabilityZone')]), 'Loop'),
@@ -885,6 +894,11 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         $render = [...$render, $unless($math('Less_IntInt', $i($pin), $array('Array_Length', $state('SSRadarDisplayIndices'))), 'Hide' . $pin),
             $array('Array_Get', $state('SSRadarDisplayIndices'), $i($pin), $l('Point')),
             $array('Array_Get', $state('SSRadarPuzzleIds'), $l('Point'), $l('PuzzleId')),
+            $array('Array_Get', $state('SSRadarSpawn'), $l('Point'), $l('Spawn')),
+            $unless($math('NotEqual_IntInt', $l('Spawn'), $i(0)), 'Fixed' . $pin),
+            $let('PuzzleId', $localCall('SSRadarSitePuzzle', [$l('Point')])),
+            $unless($math('Greater_IntInt', $l('PuzzleId'), $i(0)), 'Solved' . $pin),
+            ['label' => 'Fixed' . $pin],
             $unless($localCall('SSRadarMatchesPentadFocus', [$l('Point'), $l('PuzzleId')]), 'Solved' . $pin),
             $array('Array_Get', $state('SSRadarHubAvailabilityZones'), $l('Point'), $l('AvailabilityZone')),
             $unless($localCall('SSRadarIsPuzzleAvailable', [$l('PuzzleId'), $l('AvailabilityZone')]), 'Solved' . $pin),
@@ -896,7 +910,6 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
             $let('ScreenY', $math('Multiply_FloatFloat', $math('Add_FloatFloat', $math('Multiply_FloatFloat', $l('DX'), $l('Cos')), $math('Multiply_FloatFloat', $l('DY'), $l('Sin'))), $math('Divide_FloatFloat', $f(-96), $state('SSRadarViewRadiusCm')))),
             $b->method($state('SSRadarPin' . $pin), 'Widget', 'SetRenderTranslation', [$makeVec($l('ScreenX'), $l('ScreenY'))]),
             $b->method($state('SSRadarHeight' . $pin), 'Widget', 'SetRenderTranslation', [$makeVec($l('ScreenX'), $l('ScreenY'))]),
-            $array('Array_Get', $state('SSRadarSpawn'), $l('Point'), $l('Spawn')),
             $unless($math('EqualEqual_IntInt', $l('Spawn'), $i(0)), 'Site' . $pin),
             $b->method($state('SSRadarPin' . $pin), 'Image', 'SetColorAndOpacity', [$math('MakeColor', $f(1), $f(1), $f(1), $f(1))]), $jump('ColorDone' . $pin),
             ['label' => 'Site' . $pin], $b->method($state('SSRadarPin' . $pin), 'Image', 'SetColorAndOpacity', [$math('MakeColor', $f(0.35), $f(0.85), $f(1), $f(0.7))]), ['label' => 'ColorDone' . $pin],
@@ -988,7 +1001,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
     $p = static fn(string $n): object => FilterVariable($fn, $n);
     $let = static fn(string $n, object $e): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $p($n), 'Expression' => $e]);
     $distanceSquared = static fn(object $x, object $y): object => $math('Add_FloatFloat', $math('Multiply_FloatFloat', $x, $x), $math('Multiply_FloatFloat', $y, $y));
-    $update = [$set('SSRadarVisitedLastUpdate', $i(0)), $localCall('SSRadarRefreshPentadFocus'), $localCall('SSRadarRefreshAvailability'),
+    $update = [$set('SSRadarVisitedLastUpdate', $i(0)), $localCall('SSRadarRefreshPentadFocus'), $localCall('SSRadarRefreshAvailability'), $localCall('SSRadarRefreshSites'),
         $unless($math('BooleanAND', $state('SSRadarEnabled'), $math('Not_PreBool', $p('MenuHidden'))), 'Hidden'),
         FilterExpr('LetBool', ['VariableExpression' => $p('Teleported'), 'AssignmentExpression' => $math('Greater_FloatFloat', $distanceSquared($math('Subtract_FloatFloat', $p('PlayerX'), $state('SSRadarPlayerX')), $math('Subtract_FloatFloat', $p('PlayerY'), $state('SSRadarPlayerY'))), $f(25000000))]),
         $set('SSRadarPlayerX', $p('PlayerX')), $set('SSRadarPlayerY', $p('PlayerY')), $set('SSRadarPlayerZ', $p('PlayerZ')), $set('SSRadarYaw', $p('HeadingYaw')),
@@ -1175,6 +1188,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         'specialCompletionCoverage' => ['lorePuzzles' => $specialCompletion['lore'], 'monolithFragments' => $specialCompletion['monolithFragments'], 'saveKeyPuzzles' => $specialCompletion['saveKeyPuzzles'], 'total' => $specialCompletion['descriptors']],
         'saveKeyCompletion' => ['authority' => 'GISProgression.GetPuzzleSolveStatus(Player, KrakenID 0, LocalID "", hackID = full saved key)',
             'types' => ['rosary', 'matchbox'], 'keyArray' => 'SSRadarSpecialKeys', 'runtimeVerified' => true],
+        'liveSites' => $liveSites,
         'hubAvailability' => ['queryFunction' => 'SSRadarIsPuzzleAvailable', 'refreshFunction' => 'SSRadarRefreshAvailability',
             'zoneArray' => 'SSRadarHubAvailabilityZones', 'eligiblePuzzleIds' => count($hubPuzzleIds), 'eligiblePoints' => $hubPoints,
             'eligibleTypeTags' => array_keys($hubTypeTags), 'eligibleTypeKeys' => $hubTypeKeys, 'eligibleTypeMask' => $hubMask, 'zones' => array_keys($hubZones),

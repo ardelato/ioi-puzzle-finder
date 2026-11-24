@@ -472,7 +472,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     uasort($catalog, static fn(array $a, array $b): int => strcasecmp($a['name'], $b['name']));
     $counts = $document->counts ?? new stdClass();
     $filters = [];
-    foreach (['spawn' => 'Show possible sites'] as $source => $label) {
+    foreach (['spawn' => 'Show random-spot puzzles'] as $source => $label) {
         $filters[] = ['key' => $source, 'group' => 'source', 'label' => $label, 'default' => false,
             'state' => 'SSOverlaySource_' . $source, 'tag' => 'SaveStats.Source.' . $source];
     }
@@ -1154,7 +1154,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         $eligible = ($marker->group ?? '') === 'static' || (($marker->group ?? '') === 'hub' && ($marker->hubAvailabilityZone ?? 0) > 0);
         if (is_int($zone) && $zone > 0 && $eligible && is_string($marker->ptype ?? null)) { $zonePresence[$marker->ptype][$zone] = true; }
     }
-    // Possible sites list a type in zones without a located puzzle, but only while sites are shown.
+    // Random-spot sites list a type in zones without a located puzzle, but only while sites are shown.
     $sitePresence = [];
     foreach ((array)($document->spawnSites ?? []) as $site) {
         $zone = $site->zoneIndex ?? null;
@@ -1507,7 +1507,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     return [$asset, ['functionNames' => $functions, 'checkboxNames' => $checkboxes, 'buttonNames' => $buttons, 'widgetNames' => $newExports,
         'refreshFunction' => $refreshName, 'refreshFunctionIndex' => $refreshIndex, 'functionBytecodeSizes' => array_column(array_values(array_filter($asset->Exports, static fn(object $e): bool => in_array($e->ObjectName, $functions, true))), 'ScriptBytecodeSize', 'ObjectName'),
         'sourceDefaults' => ['static' => true, 'hub' => true, 'spawn' => false], 'typeKeys' => array_keys($catalog),
-        'visibilityRule' => 'selected type matches AND (static OR hub OR possible sites enabled) AND puzzle is not live-completed AND Pentad relic belongs to the active positive puzzle ID without positive collected proof AND verified dynamic Hub puzzle is available when native authority is ready; none selected hides every overlay marker', 'selectionMode' => 'any-or-none', 'selectionMask' => 'SSRadarSelectedMask', 'typeBits' => array_combine(array_column($typeFilters, 'key'), array_map(static fn(array $filter): int => OverlayTypeBit($filter['key']), $typeFilters)), 'nativeProperty' => 'MarkerEmitter.Marker.VisibleOnMap',
+        'visibilityRule' => 'selected type matches AND (static OR hub OR random-spot sites enabled) AND a random-spot site holds a live unsolved puzzle of a selected type (radar SSRadarIsSiteLive) AND puzzle is not live-completed AND Pentad relic belongs to the active positive puzzle ID without positive collected proof AND verified dynamic Hub puzzle is available when native authority is ready; none selected hides every overlay marker', 'selectionMode' => 'any-or-none', 'selectionMask' => 'SSRadarSelectedMask', 'typeBits' => array_combine(array_column($typeFilters, 'key'), array_map(static fn(array $filter): int => OverlayTypeBit($filter['key']), $typeFilters)), 'nativeProperty' => 'MarkerEmitter.Marker.VisibleOnMap',
         'pentadRelicTag' => 'SaveStats.PentadRelic', 'pentadVisibilityFunction' => 'SSOverlayAllowsPentadActor', 'pentadFocusField' => 'SSRadarFocusPuzzleId', 'pentadFocusRefreshFunction' => 'SSRadarRefreshPentadFocus',
         'hubAvailabilityZoneTag' => 'SaveStats.HubZone.', 'hubAvailabilityFunction' => 'SSOverlayIsActorAvailable', 'hubAvailabilityQuery' => 'SSRadarIsPuzzleAvailable', 'hubAvailabilityRefreshFunction' => 'SSRadarRefreshAvailability',
         'liveProgressFunction' => 'SSOverlayRefreshProgress', 'liveProgressBudget' => 64, 'liveProgressIntervalSeconds' => 0.25, 'liveProgressQuery' => 'SSRadarIsSolved',

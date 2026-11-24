@@ -34,7 +34,7 @@ function GetOverlayTypes(): array
             'rosary' => 'Skydrop',
             'ryoanji' => 'Sentinel Stones',
             'seek5' => 'Hidden Pentad',
-            'spawnSite' => 'Possible Spawn Site',
+            'spawnSite' => 'Random-Spot Puzzle',
             'viewfinder' => 'Sightseer',
         ];
         ksort($names, SORT_STRING);

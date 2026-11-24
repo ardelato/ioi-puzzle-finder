@@ -62,7 +62,10 @@ try {
     CheckFilter($code === 0 && $stderr === '', "Valid filter CLI failed: $stdout $stderr");
     $generated = json_decode(file_get_contents($output), false, 512, JSON_THROW_ON_ERROR);
     $details = json_decode(file_get_contents($manifest), false, 512, JSON_THROW_ON_ERROR);
-    CheckFilter(count($details->functionNames) === 67 && count($details->checkboxNames) === 30, 'Filter manifest lost functions or controls.');
+    $generatedText = file_get_contents($output);
+    CheckFilter(str_contains($generatedText, 'SSRadarIsSiteLive') && str_contains($generatedText, 'SaveStats.Site.') && str_contains($generatedText, 'SSOverlaySiteNumber')
+        && str_contains($generatedText, 'Show random-spot puzzles') && !str_contains($generatedText, 'Show possible sites'), 'Map site markers must ask the radar whether a random-spot puzzle stands on them.');
+    CheckFilter(count($details->functionNames) === 68 && count($details->checkboxNames) === 30, 'Filter manifest lost functions or controls.');
     CheckFilter($details->liveProgressFunction === 'SSOverlayRefreshProgress' && $details->liveProgressBudget === 64 && $details->liveProgressIntervalSeconds === 0.25, 'Live map progress must use bounded selected-type checks.');
     CheckFilter($details->initializationFunction === 'OnInitialized' && in_array('OnInitialized', $details->functionNames, true), 'Fresh widgets must reconcile marker visibility with their displayed defaults.');
     CheckFilter($details->selectionMode === 'any-or-none' && $details->selectionMask === 'SSRadarSelectedMask' && $details->buttonNames === ['SSOverlayButtonNone', 'SSOverlayRadarRange0', 'SSOverlayRadarRange1', 'SSOverlayRadarRange2', 'SSOverlayRadarRange3', 'SSOverlayRadarSize0', 'SSOverlayRadarSize1', 'SSOverlayRadarSize2', 'SSOverlayKeysReset'] && !in_array('SSOverlayTypesAll', $details->functionNames, true), 'Selector must provide multi-type selection, clearing and radar view controls.');

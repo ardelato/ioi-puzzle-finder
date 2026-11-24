@@ -250,4 +250,33 @@ if (in_array('--native-roundtrip', $argv, true)) {
         @rmdir($directory);
     }
 }
-echo "HUD radar embedding checks passed: native functions, lifecycle host, input transparency, placement, duplicate rejection, the multi-type selection mask, map markers, rebindable keys and saved settings.\n";
+// Live random-spot sites: tables, the budgeted refresh over the game's spawned actors, and both queries.
+$liveSite = static fn(string $id, int $number, float $x, float $y, array $types): array => ['actorName' => $id, 'ptype' => 'spawnSite', 'group' => 'spawn',
+    'siteNumber' => $number, 'x' => $x, 'y' => $y, 'z' => 0, 'tags' => array_map(static fn(string $t): string => 'SaveStats.Type.' . $t, $types)];
+$liveIndex = BuildRadarIndex([$radarPoint('A', 'hiddenCube', 1000, 0), $liveSite('S1', 1, -1000, 0, ['hiddenCube', 'matchbox']), $liveSite('S2', 2, 4000, 4000, ['matchbox'])],
+    array_intersect_key(GetOverlayTypes(), array_flip(['hiddenCube', 'matchbox'])), 20000, [['pid' => 31, 'ptype' => 'matchbox'], ['pid' => 30, 'ptype' => 'hiddenCube']]);
+[$liveRadar, $liveManifest] = BuildRadarWidget($radarBase, $liveIndex);
+$liveFields = array_column($liveRadar->Exports[0]->LoadedProperties, null, 'Name');
+$liveDefaults = array_column($liveRadar->Exports[1]->Data, null, 'Name');
+$liveFunctions = $liveIndices = [];
+foreach ($liveRadar->Exports as $n => $export) { if (str_contains($export->{'$type'} ?? '', 'FunctionExport')) { $liveFunctions[$export->ObjectName] = $export; $liveIndices[$export->ObjectName] = $n + 1; } }
+$liveValues = static fn(string $name): array => array_column($liveDefaults[$name]->Value, 'Value');
+$calls = static fn(string $caller, string $callee): bool => str_contains(json_encode($liveFunctions[$caller]->ScriptBytecode, JSON_THROW_ON_ERROR), '"StackNode":' . $liveIndices[$callee] . ',');
+CheckRadarHud(isset($liveFunctions['SSRadarRefreshSites'], $liveFunctions['SSRadarSitePuzzle'], $liveFunctions['SSRadarIsSiteLive']), 'Radar must define the live-site refresh and both site queries.');
+$liveResult = static fn(string $fn): string => array_column($liveFunctions[$fn]->LoadedProperties, null, 'Name')['ReturnValue']->SerializedType;
+CheckRadarHud($liveResult('SSRadarSitePuzzle') === 'IntProperty' && str_contains($liveFunctions['SSRadarSitePuzzle']->FunctionFlags, 'FUNC_HasOutParms')
+    && $liveResult('SSRadarIsSiteLive') === 'BoolProperty', 'SSRadarSitePuzzle returns an Int puzzle ID; SSRadarIsSiteLive returns a Bool.');
+CheckRadarHud($liveValues('SSRadarLiveIds') === [30, 31] && $liveValues('SSRadarLiveTypes') === $liveIndex['liveTypes'] && $liveValues('SSRadarSiteTypeBits') === $liveIndex['siteTypeBits']
+    && count($liveValues('SSRadarSiteOccupant')) === 3 && count($liveValues('SSRadarSiteZeros')) === 3 && $liveValues('SSRadarSiteNumbers') === $liveIndex['siteNumbers']
+    && $liveValues('SSRadarSiteLookupKeys') === $liveIndex['siteLookupKeys'] && array_column($liveDefaults['SSRadarSiteX']->Value, 'Value') === $liveIndex['siteX'], 'Live-site tables must be baked from the radar index.');
+CheckRadarHud($liveDefaults['SSRadarSitesReady']->Value === 0 && $liveDefaults['SSRadarSiteZoneCursor']->Value === -1, 'Sites start hidden until a full live pass is in.');
+$refreshCode = json_encode($liveFunctions['SSRadarRefreshSites']->ScriptBytecode, JSON_THROW_ON_ERROR);
+foreach (['"sandboxZones"', '"spawnedPuzzles"', '"KrakenId"', '"SSRadarLiveIds"', '"SSRadarSiteLookupKeys"', '"SSRadarIncludeSites"', '"SSRadarSiteWork"'] as $needle) {
+    CheckRadarHud(str_contains($refreshCode, $needle), 'Live-site refresh must read ' . $needle . '.');
+}
+$importNames = array_map(static fn(object $import): string => $import->ObjectName, $liveRadar->Imports);
+CheckRadarHud(in_array('SophiaGameState', $importNames, true) && in_array('SandboxZone', $importNames, true) && in_array('GetGameState', $importNames, true) && in_array('K2_GetActorLocation', $importNames, true), 'Refresh needs SophiaGameState, SandboxZone, GetGameState and K2_GetActorLocation imports.');
+CheckRadarHud($calls('SSRadarUpdate', 'SSRadarRefreshSites') && $calls('SSRadarScan', 'SSRadarSitePuzzle') && $calls('SSRadarRender', 'SSRadarSitePuzzle') && $calls('SSRadarIsSiteLive', 'SSRadarIsSolved'),
+    'Update must refresh sites; scan and render must ask SSRadarSitePuzzle; the map query must hide solved puzzles.');
+CheckRadarHud(($liveManifest['liveSites']['sites'] ?? 0) === 2 && $liveManifest['liveSites']['randomSpotHubIds'] === 2 && $liveManifest['liveSites']['actorsPerRefresh'] === 128 && $liveManifest['liveSites']['matchRadiusCm'] === 400, 'Radar manifest must describe the live-site contract.');
+echo "HUD radar embedding checks passed: native functions, lifecycle host, input transparency, placement, duplicate rejection, the multi-type selection mask, map markers, live random-spot sites, rebindable keys and saved settings.\n";
