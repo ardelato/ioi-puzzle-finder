@@ -25,9 +25,9 @@ assignees: ''
 
 **Puzzle and radar details**
 
-- Selected type and puzzle ID from the hover label, if available:
+- Ticked puzzle types and puzzle ID from the hover label, if available:
 - Location, radar radius and display size:
-- Possible spawn sites enabled:
+- Show random-spot puzzles on or off:
 
 **Screenshots or relevant log excerpt**
 
