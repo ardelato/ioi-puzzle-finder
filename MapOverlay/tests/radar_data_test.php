@@ -179,4 +179,36 @@ $zoned = BuildRadarIndex([RadarTestPoint('zone-a', 0, 0) + ['pid' => 501, 'zoneI
 RadarCheck($zoned['zones'] === [3, 0], 'Radar points must carry their zone for per-zone counts; unknown stays zero.');
 try { BuildRadarIndex([RadarTestPoint('zone-bad', 0, 0) + ['zoneIndex' => 16]], $catalog); throw new RuntimeException('Out-of-range zone was accepted.'); }
 catch (InvalidArgumentException) {}
-echo "Radar spatial index, budget, range, site, nearest and projection checks passed.\n";
+// Live random-spot sites: tables, nearest-site matching, and the occupancy rule.
+$site = static fn(string $id, int $number, float $x, float $y, array $allowed, float $z = 0): array => RadarTestPoint($id, $x, $y, $z, 'spawnSite', true, $allowed) + ['siteNumber' => $number];
+$liveIndex = BuildRadarIndex([
+    $site('rune-a', 1, 0, 0, ['logicGrid', 'hiddenCube']), $site('rune-b', 2, 102, 0, ['logicGrid']),
+    $site('far', 3, -25000, 999, ['matchbox']), RadarTestPoint('fixed', 50, 50) + ['pid' => 9],
+], $catalog, 20000, [['pid' => 700, 'ptype' => 'logicGrid'], ['pid' => 701, 'ptype' => 'matchbox'], ['pid' => 702, 'ptype' => 'hiddenCube'], ['pid' => 703, 'ptype' => 'seek5']]);
+RadarCheck($liveIndex['siteTypeBits'] === [0, OverlayTypeBit('logicGrid') | OverlayTypeBit('hiddenCube'), OverlayTypeBit('logicGrid'), OverlayTypeBit('matchbox')], 'Site type masks are indexed by site number with slot 0 unused.');
+RadarCheck($liveIndex['liveIds'] === [700, 701, 702] && $liveIndex['liveTypes'] === [2, 1, 0], 'Only random-spot IDs of a type some site allows are looked up, sorted, with radar type indices.');
+$sortedKeys = $liveIndex['siteLookupKeys'];
+sort($sortedKeys);
+RadarCheck($sortedKeys === $liveIndex['siteLookupKeys'] && count($sortedKeys) === 3, 'Lookup keys must be sorted for the runtime Array_Find walk.');
+RadarCheck(count($liveIndex['siteNumbers']) === count($liveIndex['positions']) && max($liveIndex['siteNumbers']) === 3 && in_array(0, $liveIndex['siteNumbers'], true), 'Every point carries its site number; fixed puzzles carry zero.');
+$occupants = RadarMatchLiveSites($liveIndex, [
+    ['pid' => 700, 'x' => 100, 'y' => 1, 'z' => 0],        // logic grid: nearest is rune-b (2 cm), not rune-a (100 cm)
+    ['pid' => 702, 'x' => 260, 'y' => 0, 'z' => 0],        // hidden cube: rune-b does not allow it, rune-a is 260 cm away
+    ['pid' => 701, 'x' => -25000, 'y' => 999, 'z' => 401], // 401 cm above its site: too far
+    ['pid' => 9, 'x' => 0, 'y' => 0, 'z' => 0],            // fixed puzzle: never claims a site
+    ['pid' => 703, 'x' => 0, 'y' => 0, 'z' => 0],          // a type no site allows
+]);
+RadarCheck($occupants === [1 => [702, 0], 2 => [700, 2]], 'Each live puzzle claims the nearest site allowing its type within 4 m.');
+$edge = BuildRadarIndex([$site('edge-site', 1, 999, 999, ['logicGrid'])], $catalog, 20000, [['pid' => 5, 'ptype' => 'logicGrid']]);
+RadarCheck(RadarMatchLiveSites($edge, [['pid' => 5, 'x' => 1001, 'y' => 1001, 'z' => 0]]) === [1 => [5, 2]], 'Matching must look across a cell edge.');
+$liveQuery = static fn(?array $occ, string $type, bool $sites = true): array => array_column(QueryRadarIndex($liveIndex, ['x' => 0, 'y' => 0, 'z' => 0], $type, $sites, 20000, 24, $occ), 'pointId');
+RadarCheck($liveQuery(null, 'logicGrid') === ['rune-a', 'rune-b'], 'Without live data the reference query keeps its old possible-site behaviour.');
+RadarCheck($liveQuery($occupants, 'logicGrid') === ['rune-b'], 'With live data a site shows only for the type standing on it.');
+RadarCheck($liveQuery($occupants, 'hiddenCube') === ['rune-a', 'fixed'], 'A multi-type site shows under the occupant type only.');
+RadarCheck($liveQuery([], 'logicGrid') === [], 'An empty live pass hides every site.');
+RadarCheck($liveQuery($occupants, 'logicGrid', false) === [], 'Sites stay off while the sites toggle is off.');
+try { BuildRadarIndex([$site('bad-number', 0, 0, 0, ['logicGrid'])], $catalog); throw new RuntimeException('Site number zero was accepted.'); }
+catch (InvalidArgumentException) {}
+try { BuildRadarIndex([$site('one', 1, 0, 0, ['logicGrid']), $site('two', 1, 5, 0, ['logicGrid'])], $catalog); throw new RuntimeException('One site number at two positions was accepted.'); }
+catch (InvalidArgumentException) {}
+echo "Radar spatial index, budget, range, site, live-site, nearest and projection checks passed.\n";

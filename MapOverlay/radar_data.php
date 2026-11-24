@@ -25,7 +25,7 @@ function RadarPosition(array|object $position): array
  * Flat arrays are intentional: cooked Blueprint can read them with Array_Get.
  * CellOffsets has one sentinel, so a complete row segment needs just two reads.
  */
-function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cellSizeCm = 20000): array
+function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cellSizeCm = 20000, array $randomSpotHub = []): array
 {
     if (!is_finite($cellSizeCm) || $cellSizeCm <= 0) {
         throw new InvalidArgumentException('Radar cell size must be positive and finite.');
@@ -100,6 +100,14 @@ function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cel
                 $pentadLocalPosition = RadarPosition($point['pentadLocalPosition']);
             }
         }
+        // The marker export numbers sites; zero (older fixtures) can never be live.
+        $siteNumber = 0;
+        if ($isSpawn && array_key_exists('siteNumber', $point)) {
+            $siteNumber = $point['siteNumber'];
+            if (!is_int($siteNumber) || $siteNumber <= 0 || $siteNumber > 1000000) {
+                throw new InvalidArgumentException('Random-spot site numbers must be positive ints.');
+            }
+        }
         $types = [];
         if ($isSpawn) {
             foreach (($point['tags'] ?? []) as $tag) {
@@ -129,7 +137,7 @@ function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cel
             $points[] = ['type' => $typeIndices[$type], 'cellX' => $cellX, 'cellY' => $cellY,
                 'position' => $position, 'isSpawn' => $isSpawn, 'id' => $id, 'puzzleId' => $puzzleId,
                 'pentadRelicIndex' => $pentadRelicIndex, 'pentadLocalPosition' => $pentadLocalPosition,
-                'hubAvailabilityZone' => $hubAvailabilityZone, 'zone' => $zone,
+                'hubAvailabilityZone' => $hubAvailabilityZone, 'zone' => $zone, 'siteNumber' => $siteNumber,
                 'countable' => !$isSpawn && (($point['group'] ?? 'static') !== 'hub' || $hubAvailabilityZone > 0)];
         }
     }
@@ -150,7 +158,7 @@ function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cel
     $stableIds = array_keys($seen);
     sort($stableIds, SORT_STRING);
     $ranks = array_flip($stableIds);
-    $positions = $isSpawn = $pointIds = $pointRanks = $puzzleIds = $pentadRelicIndices = $pentadLocalPositions = $hubAvailabilityZones = $zones = $countable = [];
+    $positions = $isSpawn = $pointIds = $pointRanks = $puzzleIds = $pentadRelicIndices = $pentadLocalPositions = $hubAvailabilityZones = $zones = $countable = $siteNumbers = [];
     foreach ($points as $point) {
         $offsets[$point['cell'] + 1]++;
         $positions[] = $point['position'];
@@ -163,6 +171,7 @@ function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cel
         $hubAvailabilityZones[] = $point['hubAvailabilityZone'];
         $zones[] = $point['zone'];
         $countable[] = $point['countable'] ? 1 : 0;
+        $siteNumbers[] = $point['siteNumber'];
     }
     for ($i = 1, $length = count($offsets); $i < $length; $i++) { $offsets[$i] += $offsets[$i - 1]; }
     ksort($completions, SORT_NUMERIC);
@@ -175,7 +184,105 @@ function BuildRadarIndex(array $renderPoints, ?array $catalog = null, float $cel
         'typeKeys' => $typeKeys, 'offsets' => $offsets, 'positions' => $positions,
         'isSpawn' => $isSpawn, 'pointIds' => $pointIds, 'pointRanks' => $pointRanks, 'puzzleIds' => $puzzleIds,
         'pentadRelicIndices' => $pentadRelicIndices, 'pentadLocalPositions' => $pentadLocalPositions,
-        'hubAvailabilityZones' => $hubAvailabilityZones, 'zones' => $zones, 'countable' => $countable, 'specialCompletions' => $specialCompletions];
+        'hubAvailabilityZones' => $hubAvailabilityZones, 'zones' => $zones, 'countable' => $countable, 'specialCompletions' => $specialCompletions,
+        'siteNumbers' => $siteNumbers] + BuildRadarLiveSites($points, $typeKeys, $randomSpotHub);
+}
+
+const RADAR_SITE_CELL_CM = 1000;
+// Measured in game (2026-11-24): each of 486 spawned random-spot puzzles stood within
+// 3.7 m of its site, and every other site allowing its type was 4.7 m or more away.
+const RADAR_SITE_MATCH_CM = 400;
+
+/**
+ * Tables for live random-spot pins. Sites are indexed by site number (slot 0 unused);
+ * a sorted cell-key list finds candidate sites near a spawned actor with Array_Find.
+ */
+function BuildRadarLiveSites(array $points, array $typeKeys, array $randomSpotHub): array
+{
+    $sites = [];
+    foreach ($points as $point) {
+        $number = $point['siteNumber'];
+        if ($number <= 0) { continue; }
+        if (isset($sites[$number]) && $sites[$number]['position'] !== $point['position']) {
+            throw new InvalidArgumentException('One random-spot site number must name one position.');
+        }
+        $sites[$number] = ['position' => $point['position'], 'bits' => ($sites[$number]['bits'] ?? 0) | OverlayTypeBit($typeKeys[$point['type']])];
+    }
+    $count = $sites === [] ? 0 : max(array_keys($sites));
+    $x = $y = $z = array_fill(0, $count + 1, 0.0);
+    $bits = array_fill(0, $count + 1, 0);
+    $cells = [];
+    foreach ($sites as $number => $site) {
+        $x[$number] = $site['position']['x']; $y[$number] = $site['position']['y']; $z[$number] = $site['position']['z'];
+        $bits[$number] = $site['bits'];
+        $cells[$number] = [(int)floor($site['position']['x'] / RADAR_SITE_CELL_CM), (int)floor($site['position']['y'] / RADAR_SITE_CELL_CM)];
+    }
+    $originX = $cells === [] ? 0 : min(array_column($cells, 0));
+    $originY = $cells === [] ? 0 : min(array_column($cells, 1));
+    $width = $cells === [] ? 1 : max(array_column($cells, 0)) - $originX + 1;
+    $height = $cells === [] ? 1 : max(array_column($cells, 1)) - $originY + 1;
+    if ($width * $height > 2147483647) { throw new InvalidArgumentException('Random-spot site bounds exceed int32 cell keys.'); }
+    $lookup = [];
+    foreach ($cells as $number => [$cx, $cy]) { $lookup[] = [($cx - $originX) * $height + ($cy - $originY), $number]; }
+    sort($lookup);
+    // Only puzzles whose type some site allows can ever be pinned.
+    $siteTypes = [];
+    foreach ($typeKeys as $type => $key) {
+        foreach ($bits as $mask) { if (($mask & OverlayTypeBit($key)) !== 0) { $siteTypes[$key] = $type; break; } }
+    }
+    $live = [];
+    foreach ($randomSpotHub as $row) {
+        $pid = $row['pid'] ?? null;
+        if (!is_int($pid) || $pid <= 0 || $pid > 2147483647) { throw new InvalidArgumentException('Random-spot Hub IDs must be positive int32 values.'); }
+        if (isset($siteTypes[$row['ptype'] ?? ''])) { $live[$pid] = $siteTypes[$row['ptype']]; }
+    }
+    ksort($live, SORT_NUMERIC);
+    return ['siteCellCm' => RADAR_SITE_CELL_CM, 'siteMatchCm' => RADAR_SITE_MATCH_CM,
+        'siteOriginCellX' => $originX, 'siteOriginCellY' => $originY, 'siteWidth' => $width, 'siteHeight' => $height,
+        'siteX' => $x, 'siteY' => $y, 'siteZ' => $z, 'siteTypeBits' => $bits,
+        'siteLookupKeys' => array_column($lookup, 0), 'siteLookupNumbers' => array_column($lookup, 1),
+        'liveIds' => array_keys($live), 'liveTypes' => array_values($live)];
+}
+
+/**
+ * Reference for the runtime pass: each spawned random-spot puzzle claims the nearest
+ * site that allows its type within RADAR_SITE_MATCH_CM. Returns siteNumber => [pid, type].
+ */
+function RadarMatchLiveSites(array $index, array $actors): array
+{
+    $occupants = [];
+    $liveTypes = $index['liveIds'] === [] ? [] : array_combine($index['liveIds'], $index['liveTypes']);
+    $keys = $index['siteLookupKeys'];
+    foreach ($actors as $actor) {
+        $pid = $actor['pid'];
+        if (!isset($liveTypes[$pid])) { continue; }
+        $type = $liveTypes[$pid];
+        $bit = OverlayTypeBit($index['typeKeys'][$type]);
+        $position = RadarPosition($actor);
+        $best = 0;
+        $bestDistance = RADAR_SITE_MATCH_CM * RADAR_SITE_MATCH_CM;
+        $visited = [];
+        foreach ([-1, 1] as $sx) {
+            foreach ([-1, 1] as $sy) {
+                $cx = (int)floor(($position['x'] + $sx * RADAR_SITE_MATCH_CM) / RADAR_SITE_CELL_CM) - $index['siteOriginCellX'];
+                $cy = (int)floor(($position['y'] + $sy * RADAR_SITE_MATCH_CM) / RADAR_SITE_CELL_CM) - $index['siteOriginCellY'];
+                if ($cx < 0 || $cy < 0 || $cx >= $index['siteWidth'] || $cy >= $index['siteHeight']) { continue; }
+                $key = $cx * $index['siteHeight'] + $cy;
+                if (isset($visited[$key])) { continue; }
+                $visited[$key] = true;
+                for ($j = array_search($key, $keys, true); $j !== false && $j < count($keys) && $keys[$j] === $key; $j++) {
+                    $number = $index['siteLookupNumbers'][$j];
+                    if (($index['siteTypeBits'][$number] & $bit) === 0) { continue; }
+                    $dx = $index['siteX'][$number] - $position['x']; $dy = $index['siteY'][$number] - $position['y']; $dz = $index['siteZ'][$number] - $position['z'];
+                    $distance = $dx * $dx + $dy * $dy + $dz * $dz;
+                    if ($distance < $bestDistance) { $bestDistance = $distance; $best = $number; }
+                }
+            }
+        }
+        if ($best > 0) { $occupants[$best] = [$pid, $type]; }
+    }
+    ksort($occupants, SORT_NUMERIC);
+    return $occupants;
 }
 
 /** A horizontal range of one cell width touches at most three contiguous rows. */
@@ -212,13 +319,14 @@ function RadarIndexRanges(array $index, array|object $player, string $selectedTy
     return $ranges;
 }
 
-function BeginRadarQuery(array $index, array|object $player, string $selectedType, bool $includeSites = false, float $rangeCm = 20000, int $limit = 24): array
+function BeginRadarQuery(array $index, array|object $player, string $selectedType, bool $includeSites = false, float $rangeCm = 20000, int $limit = 24, ?array $siteOccupants = null): array
 {
     if ($limit < 1) { throw new InvalidArgumentException('Radar pin limit must be positive.'); }
     $player = RadarPosition($player);
     $ranges = RadarIndexRanges($index, $player, $selectedType, $rangeCm);
     return ['player' => $player, 'ranges' => $ranges, 'rangeCursor' => 0,
-        'positionCursor' => $ranges[0]['start'] ?? 0, 'includeSites' => $includeSites,
+        'positionCursor' => $ranges[0]['start'] ?? 0, 'includeSites' => $includeSites, 'siteOccupants' => $siteOccupants,
+        'type' => array_search($selectedType, $index['typeKeys'], true),
         'rangeSquared' => $rangeCm * $rangeCm, 'limit' => $limit, 'processed' => 0,
         'results' => [], 'done' => $ranges === []];
 }
@@ -238,7 +346,10 @@ function StepRadarQuery(array $index, array &$state, int $budget = 128): bool
         $dx = $point['x'] - $state['player']['x'];
         $dy = $point['y'] - $state['player']['y'];
         $distanceSquared = $dx * $dx + $dy * $dy;
-        if (($state['includeSites'] || !$index['isSpawn'][$i]) && $distanceSquared <= $state['rangeSquared']) {
+        // With live occupants supplied, a site shows only while a puzzle of the queried type stands on it.
+        $siteVisible = !$index['isSpawn'][$i] || ($state['includeSites'] && ($state['siteOccupants'] === null
+            || (($state['siteOccupants'][$index['siteNumbers'][$i] ?? 0][1] ?? -1) === $state['type'])));
+        if ($siteVisible && $distanceSquared <= $state['rangeSquared']) {
             $state['results'][] = ['index' => $i, 'pointId' => $index['pointIds'][$i], 'pointRank' => $index['pointRanks'][$i],
                 'position' => $point, 'isSpawn' => (bool)$index['isSpawn'][$i], 'distanceSquared' => $distanceSquared];
             usort($state['results'], static fn(array $a, array $b): int => ($a['distanceSquared'] <=> $b['distanceSquared']) ?: ($a['pointRank'] <=> $b['pointRank']));
@@ -253,9 +364,9 @@ function StepRadarQuery(array $index, array &$state, int $budget = 128): bool
     return $state['done'];
 }
 
-function QueryRadarIndex(array $index, array|object $player, string $selectedType, bool $includeSites = false, float $rangeCm = 20000, int $limit = 24): array
+function QueryRadarIndex(array $index, array|object $player, string $selectedType, bool $includeSites = false, float $rangeCm = 20000, int $limit = 24, ?array $siteOccupants = null): array
 {
-    $state = BeginRadarQuery($index, $player, $selectedType, $includeSites, $rangeCm, $limit);
+    $state = BeginRadarQuery($index, $player, $selectedType, $includeSites, $rangeCm, $limit, $siteOccupants);
     while (!StepRadarQuery($index, $state)) { /* Reference implementation of budgeted runtime updates. */ }
     return $state['results'];
 }
@@ -304,7 +415,7 @@ function RadarDataMain(array $argv): int
     if (($manifest['schemaVersion'] ?? null) !== 1 || !is_array($manifest['renderPoints'] ?? null)) {
         throw new InvalidArgumentException('Expected a schemaVersion 1 render-point manifest.');
     }
-    $index = BuildRadarIndex($manifest['renderPoints']);
+    $index = BuildRadarIndex($manifest['renderPoints'], null, 20000, $manifest['randomSpotHub'] ?? []);
     require_once __DIR__ . '/markers.php';
     WriteMarkerJson($output, $index);
     printf("Indexed %d radar entries across %d puzzle types.\n", count($index['positions']), count($index['typeKeys']));
