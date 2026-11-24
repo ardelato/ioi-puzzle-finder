@@ -62,10 +62,10 @@ try {
     CheckFilter($code === 0 && $stderr === '', "Valid filter CLI failed: $stdout $stderr");
     $generated = json_decode(file_get_contents($output), false, 512, JSON_THROW_ON_ERROR);
     $details = json_decode(file_get_contents($manifest), false, 512, JSON_THROW_ON_ERROR);
-    CheckFilter(count($details->functionNames) === 57 && count($details->checkboxNames) === 30, 'Filter manifest lost functions or controls.');
+    CheckFilter(count($details->functionNames) === 67 && count($details->checkboxNames) === 30, 'Filter manifest lost functions or controls.');
     CheckFilter($details->liveProgressFunction === 'SSOverlayRefreshProgress' && $details->liveProgressBudget === 64 && $details->liveProgressIntervalSeconds === 0.25, 'Live map progress must use bounded selected-type checks.');
     CheckFilter($details->initializationFunction === 'OnInitialized' && in_array('OnInitialized', $details->functionNames, true), 'Fresh widgets must reconcile marker visibility with their displayed defaults.');
-    CheckFilter($details->selectionMode === 'any-or-none' && $details->selectionMask === 'SSRadarSelectedMask' && $details->buttonNames === ['SSOverlayButtonNone', 'SSOverlayRadarRange0', 'SSOverlayRadarRange1', 'SSOverlayRadarRange2', 'SSOverlayRadarRange3', 'SSOverlayRadarSize0', 'SSOverlayRadarSize1', 'SSOverlayRadarSize2'] && !in_array('SSOverlayTypesAll', $details->functionNames, true), 'Selector must provide multi-type selection, clearing and radar view controls.');
+    CheckFilter($details->selectionMode === 'any-or-none' && $details->selectionMask === 'SSRadarSelectedMask' && $details->buttonNames === ['SSOverlayButtonNone', 'SSOverlayRadarRange0', 'SSOverlayRadarRange1', 'SSOverlayRadarRange2', 'SSOverlayRadarRange3', 'SSOverlayRadarSize0', 'SSOverlayRadarSize1', 'SSOverlayRadarSize2', 'SSOverlayKeysReset'] && !in_array('SSOverlayTypesAll', $details->functionNames, true), 'Selector must provide multi-type selection, clearing and radar view controls.');
     AssertNoContextCallArguments($generated, 'Map widget');
     $exports = array_column($generated->Exports, null, 'ObjectName');
     foreach ($details->typeBits as $type => $bit) {
@@ -206,7 +206,9 @@ try {
     $radarProperties = array_column($exports['SSOverlayRadarPanel']->Data, 'Value', 'Name');
     CheckFilter($panelProperties['Visibility'] === 'ESlateVisibility::Collapsed' && $radarProperties['Visibility'] === 'ESlateVisibility::Collapsed', 'The map must open on the game legend tab.');
     $rowOwner = static fn(string $name): string => $generated->Exports[$generated->Exports[$slotOf($exports[$name]) - 1]->OuterIndex - 1]->ObjectName;
-    CheckFilter($rowOwner('SSOverlayCheck_radar_enabled_Row') === 'SSOverlayRadarPanel' && $rowOwner('SSOverlayRadarRangeText') === 'SSOverlayRadarPanel'
+    CheckFilter($rowOwner('SSOverlayCheck_radar_enabled_Row') === 'SSOverlayRadarList' && $rowOwner('SSOverlayRadarRangeRow') === 'SSOverlayRadarList'
+        && $rowOwner('SSOverlayRadarList') === 'SSOverlayRadarPanel' && $generated->Imports[-1 - $exports['SSOverlayRadarPanel']->ClassIndex]->ObjectName === 'ScrollBox'
+        && $rowOwner('SSOverlayKeyRowToggle') === 'SSOverlayRadarList' && $rowOwner('SSOverlayPuzzlesSaved') === 'SSOverlayPuzzleLayout' && $rowOwner('SSOverlayRadarSaved') === 'SSOverlayRadarList'
         && $rowOwner('SSOverlayCheck_source_spawn_Row') === 'SSOverlayPuzzleLayout' && $rowOwner('SSOverlayButtonNone') === 'SSOverlayTypesHeader' && $rowOwner('SSOverlayScroll') === 'SSOverlayPuzzleLayout' && $rowOwner('SSOverlayCheck_type_matchbox') === 'SSOverlayList', 'Radar settings belong to the Radar tab, puzzle controls to the Puzzles tab.');
     $checkWheel = static function (object $widget): void {
         $exports = array_column($widget->Exports, null, 'ObjectName');
@@ -216,6 +218,38 @@ try {
             && $wheel->EnumType === 'EConsumeMouseWheel' && $wheel->Value === 'EConsumeMouseWheel::Always', 'Filter list must consume wheel events even at either scroll limit.');
     };
     $checkWheel($generated);
+    // Rebindable keys: one selector per radar action, bound to a handler that rebinds on the radar.
+    $showKeys = array_search($exports['SSOverlayShowKeys'], $generated->Exports, true) + 1;
+    CheckFilter(array_keys((array)$details->radarKeys->defaults) === array_keys(RadarShortcutActions()), 'Every radar action must have a key selector.');    foreach (RadarShortcutActions() as $action => [, $key]) {
+        $selector = $exports['SSOverlayKey' . $action] ?? null;
+        CheckFilter($selector !== null && $generated->Imports[-1 - $selector->ClassIndex]->ObjectName === 'InputKeySelector', $action . ' must use the native key selector.');
+        $selectorData = array_column($selector->Data, null, 'Name');
+        CheckFilter($selectorData['SelectedKey']->StructType === 'InputChord' && $selectorData['SelectedKey']->Value[0]->Value[0]->Value === $key && $selectorData['bAllowModifierKeys']->Value === 0, $action . ' must start on its default key without modifiers.');
+        CheckFilter(($bindings['SSOverlayKey' . $action] ?? null) !== null, $action . ' selector must have bound events.');
+        $handler = $exports['SSOverlayKeySelected' . $action];
+        CheckFilter($handler->LoadedProperties[0]->Name === 'Chord' && str_contains($handler->LoadedProperties[0]->PropertyFlags, 'CPF_Parm') && $generated->Imports[-1 - $handler->LoadedProperties[0]->Struct]->ObjectName === 'InputChord', 'OnKeySelected handlers must take the selected chord.');
+        $handlerCode = json_encode($handler->ScriptBytecode, JSON_THROW_ON_ERROR);
+        CheckFilter(str_contains($handlerCode, '"VirtualFunctionName":"SSRadarRebind"') && str_contains($handlerCode, '"Path":["SSRadarRebindSwap"]') && str_contains($handlerCode, '"StackNode":' . $showKeys . ','), $action . ' must rebind on the radar, report swaps and redraw the keys.');
+        CheckFilter(str_contains($handlerCode, '"Value":"Escape"') && str_contains($handlerCode, '"StackNode":' . (-1 - array_search('Key_IsMouseButton', array_column($generated->Imports, 'ObjectName'), true)) . ','), 'Esc must cancel and mouse buttons must be refused.');
+        $checkContextArguments($handler->ScriptBytecode);
+    }
+    $events = [];
+    foreach ($exports['ComponentDelegateBinding_0']->Data[0]->Value as $binding) {
+        $values = array_column($binding->Value, 'Value', 'Name');
+        $events[$values['ComponentPropertyName'] . '.' . $values['DelegatePropertyName']] = $values['FunctionNameToBind'];
+    }
+    CheckFilter(($events['SSOverlayKeyToggle.OnKeySelected'] ?? null) === 'SSOverlayKeySelectedToggle' && ($events['SSOverlayKeySize.OnIsSelectingKeyChanged'] ?? null) === 'SSOverlayKeyPickingSize'
+        && ($events['SSOverlayKeysReset.OnClicked'] ?? null) === 'SSOverlayResetKeys', 'Key selectors and Reset must be bound.');
+    CheckFilter(str_contains(json_encode($exports['SSOverlayResetKeys']->ScriptBytecode, JSON_THROW_ON_ERROR), '"VirtualFunctionName":"SSRadarResetKeys"'), 'Reset must restore the default keys on the radar.');
+    foreach (['SSOverlayShowTabRadar', 'OnInitialized'] as $caller) {
+        CheckFilter(str_contains(json_encode($exports[$caller]->ScriptBytecode, JSON_THROW_ON_ERROR), '"StackNode":' . $showKeys . ','), $caller . ' must show the radar\'s current keys.');
+    }
+    // Saved settings: the radar owns them; the map pulls from it, or reads the slot when no radar exists yet.
+    $initialize = json_encode($exports['OnInitialized']->ScriptBytecode, JSON_THROW_ON_ERROR);
+    CheckFilter(str_contains($initialize, '"Path":["SSRadarHideDone"]') && str_contains($initialize, '"Value":"' . RADAR_SETTINGS_SLOT . '"') && str_contains($initialize, '"Value":"' . RadarSettingsCatalogKey() . '"')
+        && str_contains($initialize, '"StackNode":' . (-1 - array_search('LoadGameFromSlot', array_column($generated->Imports, 'ObjectName'), true)) . ','), 'Map initialization must restore saved settings, including Hide completed.');
+    CheckFilter(str_contains($publish, '"VirtualFunctionName":"SSRadarSetHideDone"'), 'Hide completed must reach the radar, which saves it.');
+    CheckFilter(!isset($exports['SSOverlayRadarKeys']) && !isset($exports['SSOverlayRadarTitle']), 'The static key hint is replaced by key selectors.');
     if (in_array('--native-roundtrip', $argv, true)) {
         $assetTool = OverlayTestAssetGui();
         $nativeAsset = $directory . '/widget.uasset';
