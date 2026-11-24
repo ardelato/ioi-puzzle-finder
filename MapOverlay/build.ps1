@@ -430,6 +430,21 @@ $radarRoundtrip = Get-Content -Raw -LiteralPath $radarRoundtripJson | ConvertFro
 Assert-RadarWidgetRoundtrip $radarSource $radarRoundtrip 'Radar' $stagedRadar
 $radarClass = @($radarRoundtrip.Exports | Where-Object ObjectName -CEQ 'WBP_SSOverlayRadar_C')
 if ($radarClass.Count -ne 1 -or $radarClass[0].'$type' -notlike '*ClassExport,*') { throw 'Generated radar class is missing.' }
+
+# Saved radar settings (types, view, keys) use their own SaveGame class and slot.
+$settingsJson = Join-Path $runDir 'SSRadarSettings.json'
+$stagedSettings = Join-Path $stagedRadarDir 'SSRadarSettings.uasset'
+$settingsRoundtripJson = Join-Path $runDir 'settings-roundtrip.json'
+Invoke-CheckedTool $php @((Join-Path $PSScriptRoot 'radar_settings.php'), '--base-widget', $baselineWidgetJson, '--output', $settingsJson)
+Invoke-CheckedTool $assetGui @('fromjson', $settingsJson, $stagedSettings)
+Invoke-CheckedTool $assetGui @('tojson', $stagedSettings, $settingsRoundtripJson, 'VER_UE4_27')
+$settingsRoundtrip = Get-Content -Raw -LiteralPath $settingsRoundtripJson | ConvertFrom-Json -Depth 100
+$settingsClass = @($settingsRoundtrip.Exports | Where-Object ObjectName -CEQ 'SSRadarSettings_C')
+if ($settingsClass.Count -ne 1 -or $settingsClass[0].'$type' -notlike '*ClassExport,*' -or
+    $settingsRoundtrip.Imports[-1 - $settingsClass[0].SuperIndex].ObjectName -cne 'SaveGame') {
+    throw 'Generated radar settings class is missing or not a SaveGame.'
+}
+
 $radarIndex = Get-Content -Raw -LiteralPath $radarDataPath | ConvertFrom-Json -Depth 30
 $packagedPentadCoverage = Assert-PentadPackagedCoverage $snapshot $selectedMarkers $radarIndex $radarRoundtrip $Limit
 $packagedHubCoverage = Assert-HubAvailabilityPackage $snapshot $selectedMarkers $radarIndex $radarRoundtrip $Limit
@@ -491,6 +506,7 @@ $manifest = [ordered]@{
     radarData = $radarDataPath
     radarManifest = $radarManifestPath
     radarRoundtripJson = $radarRoundtripJson
+    radarSettingsRoundtripJson = $settingsRoundtripJson
     labyrinthBake = $labyrinthBake
     specialCompletionCoverage = $specialCoverage
     packagedSpecialCompletionCoverage = $packagedSpecialCoverage

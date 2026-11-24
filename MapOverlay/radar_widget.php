@@ -6,6 +6,7 @@ require_once __DIR__ . '/filter_widget.php';
 require_once __DIR__ . '/radar_data.php';
 require_once __DIR__ . '/radar_special_completion.php';
 require_once __DIR__ . '/radar_labyrinth.php';
+require_once __DIR__ . '/radar_settings.php';
 
 /** Bytecode helpers kept separate from the established map generator. */
 function RadarExprSize(object $e): int
@@ -242,6 +243,12 @@ final class RadarWidgetBuilder
         foreach ($parameters as $n => $kind) {
             $p = $this->field($kind, $n, 'CPF_Parm');
             if ($kind === 'Object') { $p->PropertyClass = $this->native['Object']; }
+            if ($kind === 'Struct') {
+                // Struct parameters are FKeys (rebinding); others would need their own mapping.
+                if ($n !== 'InputKey') { throw new InvalidArgumentException('Unsupported radar struct parameter ' . $n); }
+                $p->Struct = $this->native['Key'];
+                $p->ElementSize = 32;
+            }
             $properties[] = $p;
         }
         if ($returnType !== null) {
@@ -252,7 +259,9 @@ final class RadarWidgetBuilder
             $p = $this->field($kind, $n);
             if ($kind === 'Object') { $p->PropertyClass = $this->native['Object']; }
             if ($kind === 'Struct') {
-                $struct = match ($n) { 'PlayerRotation' => 'Rotator', 'Timer' => 'TimerHandle', 'Transform' => 'WidgetTransform', 'Translation' => 'Vector2D', 'InputMapping' => 'InputActionKeyMapping', 'InputKey' => 'Key', 'PuzzleStatus' => 'PuzzleSolveData', 'Ping' => 'LocationPingInfo', default => 'Vector' };
+                $struct = match (true) { $n === 'PlayerRotation' => 'Rotator', $n === 'Timer' => 'TimerHandle', $n === 'Transform' => 'WidgetTransform', $n === 'Translation' => 'Vector2D',
+                    $n === 'InputMapping' => 'InputActionKeyMapping', $n === 'InputKey', $n === 'OldKey', $n === 'OtherKey', (bool)preg_match('/^(Default|Loaded)Key[A-Za-z]+$/', $n) => 'Key',
+                    $n === 'PuzzleStatus' => 'PuzzleSolveData', $n === 'Ping' => 'LocationPingInfo', default => 'Vector' };
                 $p->Struct = $this->native[$struct];
                 $p->ElementSize = match ($struct) { 'TimerHandle', 'Vector2D' => 8, 'WidgetTransform' => 28, 'InputActionKeyMapping', 'LocationPingInfo' => 48, 'Key' => 32, 'PuzzleSolveData' => 40, default => 12 };
             }
@@ -421,12 +430,23 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
     for ($pin = 0; $pin < 24; $pin++) { $b->scalar('Int', 'SSRadarPinType' . $pin, -1); }
     foreach (['SSRadarPlayerX', 'SSRadarPlayerY', 'SSRadarPlayerZ', 'SSRadarYaw', 'SSRadarScanX', 'SSRadarScanY', 'SSRadarWait'] as $n) { $b->scalar('Float', $n, 0); }
     $b->scalar('Float', 'SSRadarRadiusCm', 10000);
-    $shortcuts = ['Toggle' => ['F8', 'SSRadarInputToggle'], 'ZoomIn' => ['F3', 'SSRadarInputZoomIn'], 'ZoomOut' => ['F4', 'SSRadarInputZoomOut'], 'Size' => ['F10', 'SSRadarInputSize']];
-    foreach ($shortcuts as $action => [$key]) {
-        $b->structField('SSRadarKey' . $action, 'InputActionKeyMapping', 48, [OverlayProperty('Name', 'ActionName', 'SaveStatsRadar' . $action),
+    $shortcutActions = RadarShortcutActions();
+    $inputCallbacks = [];
+    foreach ($shortcutActions as $action => [$actionName, $key]) {
+        $inputCallbacks[$action] = 'SSRadarInput' . $action;
+        $b->structField('SSRadarKey' . $action, 'InputActionKeyMapping', 48, [OverlayProperty('Name', 'ActionName', $actionName),
             OverlayProperty('Bool', 'bShift', 0), OverlayProperty('Bool', 'bCtrl', 0), OverlayProperty('Bool', 'bAlt', 0), OverlayProperty('Bool', 'bCmd', 0),
             FilterStruct('Key', 'Key', [OverlayProperty('Name', 'KeyName', $key)])]);
     }
+    // Map-only option kept here so the radar is the single writer of the settings slot.
+    $b->scalar('Bool', 'SSRadarHideDone', 0);
+    // Rebinding reports the action that gave up its key (-1: none); load/save report their outcome.
+    $b->scalar('Int', 'SSRadarRebindSwap', -1);
+    $b->scalar('Bool', 'SSRadarSettingsLoaded', 0);
+    $b->scalar('Bool', 'SSRadarSettingsSaved', 0);
+    $settingsPackage = OverlayImport($b->asset, RADAR_SETTINGS_PACKAGE, 0, '/Script/CoreUObject', 'Package');
+    $b->native['RadarSettings'] = OverlayImport($b->asset, RADAR_SETTINGS_CLASS, $settingsPackage, '/Script/Engine', 'BlueprintGeneratedClass');
+    $b->native['KismetInputLibrary'] = OverlayImport($b->asset, 'KismetInputLibrary', $b->native['Engine'], '/Script/CoreUObject', 'Class');
     foreach (['SSRadarOffsets' => $index['offsets'], 'SSRadarSpawn' => $index['isSpawn'], 'SSRadarRanks' => $index['pointRanks'], 'SSRadarPuzzleIds' => $index['puzzleIds'], 'SSRadarBestIndices' => [], 'SSRadarDisplayIndices' => []] as $n => $v) { $b->arrayField('Int', $n, $v); }
     $b->arrayField('Int', 'SSRadarPentadRelicIndices', $index['pentadRelicIndices']);
     $b->arrayField('Int', 'SSRadarHubAvailabilityZones', $index['hubAvailabilityZones']);
@@ -469,7 +489,8 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
             FilterStruct('ColorAndOpacity', 'SlateColor', [$linear('SpecifiedColor', 0.75, 0.94, 0.97, 1)]), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed')], 108, 108, 52, 16);
     }
     foreach (['SSRadarSetSelection', 'SSRadarSetView', 'SSRadarApplyView', 'SSRadarChangeZoom', 'SSRadarCycleSize', 'SSRadarToggleEnabled', 'SSRadarIsSolved', 'SSRadarAcknowledgeMapProgress',
-        'SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable', 'SSRadarRefreshPentadFocus', 'SSRadarIsPentadRelicVisible', 'SSRadarMatchesPentadFocus', 'SSRadarHandleShortcut', ...array_column($shortcuts, 1), 'SSRadarApplyIcon', 'SSRadarStartScan', 'SSRadarScan', 'SSRadarRender', 'SSRadarRenderMarkers', 'SSRadarInitMaze', 'SSRadarRefreshMaze', 'SSRadarRenderMaze', 'SSRadarUpdate', 'SSRadarTick', 'OnInitialized', 'Construct', 'Destruct'] as $fn) { $b->reserve($fn); }
+        'SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable', 'SSRadarRefreshPentadFocus', 'SSRadarIsPentadRelicVisible', 'SSRadarMatchesPentadFocus', 'SSRadarHandleShortcut', ...array_values($inputCallbacks),
+        'SSRadarLoadSettings', 'SSRadarSaveSettings', 'SSRadarRegisterKeys', 'SSRadarRebind', 'SSRadarResetKeys', 'SSRadarSetHideDone', 'SSRadarApplyIcon', 'SSRadarStartScan', 'SSRadarScan', 'SSRadarRender', 'SSRadarRenderMarkers', 'SSRadarInitMaze', 'SSRadarRefreshMaze', 'SSRadarRenderMaze', 'SSRadarUpdate', 'SSRadarTick', 'OnInitialized', 'Construct', 'Destruct'] as $fn) { $b->reserve($fn); }
     $specialCompletion = AddRadarSpecialCompletion($b, $index['specialCompletions'] ?? []);
     $makeVec = static fn(object $x, object $y): object => $math('MakeVector2D', $x, $y);
     $labelText = static fn(string $n, string $text): object => $b->method($state($n), 'TextBlock', 'SetText', [$b->call('KismetTextLibrary', 'Conv_StringToText', [FilterExpr('StringConst', ['Value' => $text])])]);
@@ -709,6 +730,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         $unless($math('BooleanAND', $math('EqualEqual_IntInt', $state('SSRadarSelectedMask'), $p('SelectedMask')), $math('BooleanAND', $math('EqualEqual_BoolBool', $state('SSRadarIncludeSites'), $p('IncludeSites')), $math('EqualEqual_BoolBool', $state('SSRadarEnabled'), $p('Enabled')))), 'Changed'),
         FilterExpr('Return', ['ReturnExpression' => FilterExpr('Nothing')]), ['label' => 'Changed'], $set('SSRadarSelectedMask', $p('SelectedMask')), $setBool('SSRadarIncludeSites', $p('IncludeSites')), $setBool('SSRadarEnabled', $p('Enabled')),
         ...$clear, $revise(), ...array_map(static fn(int $pin): object => $set('SSRadarPinType' . $pin, $i(-1)), range(0, 23)), $localCall('SSRadarApplyIcon'),
+        $localCall('SSRadarSaveSettings'),
     ]);
     $fn = $b->functions['SSRadarSetView'];
     $p = static fn(string $n): object => FilterVariable($fn, $n);
@@ -717,7 +739,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         $letView('Zoom', $math('Max', $i(0), $math('Min', $i(3), $p('ZoomIndex')))), $letView('Size', $math('Max', $i(0), $math('Min', $i(2), $p('SizeIndex')))),
         $unless($math('BooleanOR', $math('NotEqual_IntInt', $p('Zoom'), $state('SSRadarZoomIndex')), $math('NotEqual_IntInt', $p('Size'), $state('SSRadarSizeIndex'))), 'Done'),
         $unless($math('NotEqual_IntInt', $p('Zoom'), $state('SSRadarZoomIndex')), 'Size'), ...unserialize(serialize($clear)),
-        ['label' => 'Size'], $set('SSRadarZoomIndex', $p('Zoom')), $set('SSRadarSizeIndex', $p('Size')), $revise(), $localCall('SSRadarApplyView'), ['label' => 'Done'],
+        ['label' => 'Size'], $set('SSRadarZoomIndex', $p('Zoom')), $set('SSRadarSizeIndex', $p('Size')), $revise(), $localCall('SSRadarApplyView'), $localCall('SSRadarSaveSettings'), ['label' => 'Done'],
     ]);
     $view = [$b->method(FilterExpr('Self'), 'Widget', 'SetRenderTransformPivot', [$makeVec($f(0), $f(1))])];
     foreach ([5000, 10000, 20000, 40000] as $zoom => $radius) {
@@ -737,6 +759,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         $localCall('SSRadarSetView', [$state('SSRadarZoomIndex'), $math('Add_IntInt', $state('SSRadarSizeIndex'), $i(1))]), $jump('Done'),
         ['label' => 'Wrap'], $localCall('SSRadarSetView', [$state('SSRadarZoomIndex'), $i(0)]), ['label' => 'Done']]);
     $b->define('SSRadarToggleEnabled', [], [], [$localCall('SSRadarSetSelection', [$state('SSRadarSelectedMask'), $state('SSRadarIncludeSites'), $math('Not_PreBool', $state('SSRadarEnabled'))])]);
+    AddRadarSettingsFunctions($b, $shortcutActions);
     $fn = $b->functions['SSRadarHandleShortcut'];
     $player = FilterVariable($fn, 'Player');
     $inputLocal = static fn(string $name): object => FilterVariable($fn, $name);
@@ -769,7 +792,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
     }
     $shortcut[] = ['label' => 'Done'];
     $b->define('SSRadarHandleShortcut', ['Action' => 'Int'], ['Player' => 'Object', 'MenuResult' => 'Bool', 'Controller' => 'Object', 'OwnerPlayer' => 'Object', 'OwnerWidget' => 'Object', 'CurrentHud' => 'Object', 'ExpectedOwner' => 'Object'], $shortcut);
-    foreach (array_values($shortcuts) as $action => [, $callback]) { $b->define($callback, [], [], [$localCall('SSRadarHandleShortcut', [$i($action)])]); }
+    foreach (array_values($inputCallbacks) as $action => $callback) { $b->define($callback, [], [], [$localCall('SSRadarHandleShortcut', [$i($action)])]); }
     // Caption only: pin icons follow each point's own type in SSRadarRender.
     $fn = $b->functions['SSRadarApplyIcon'];
     $l = static fn(string $n): object => FilterVariable($fn, $n);
@@ -1105,24 +1128,30 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
     $b->define('SSRadarTick', [], ['Player' => 'Object', 'PlayerPosition' => 'Struct', 'PlayerRotation' => 'Struct', 'MapVisible' => 'Bool', 'MenuResult' => 'Bool'], $tick);
     foreach (['OnInitialized', 'Construct'] as $event) {
         $timerFunction = $b->functions[$event];
-        $events = [$localCall('SSRadarApplyView'), FilterExpr('Let', ['Value' => FilterPointer($timerFunction, 'Timer'), 'Variable' => FilterVariable($timerFunction, 'Timer'),
+        // Saved settings (types, view, keys) are restored once, before anything reads them.
+        $events = [...($event === 'OnInitialized' ? [$localCall('SSRadarLoadSettings'), $localCall('SSRadarApplyIcon')] : []),
+            $localCall('SSRadarApplyView'), FilterExpr('Let', ['Value' => FilterPointer($timerFunction, 'Timer'), 'Variable' => FilterVariable($timerFunction, 'Timer'),
             'Expression' => $b->call('KismetSystemLibrary', 'K2_SetTimer', [FilterExpr('Self'), FilterExpr('StringConst', ['Value' => 'SSRadarTick']), $f(0.1), $bool(true), $f(0), $f(0)])])];
         if ($event === 'Construct') {
-            $settings = FilterVariable($timerFunction, 'Settings');
-            $events[] = FilterExpr('Let', ['Value' => FilterPointer($timerFunction, 'Settings'), 'Variable' => $settings, 'Expression' => $b->call('InputSettings', 'GetInputSettings')]);
             $events[] = $b->method(FilterExpr('Self'), 'UserWidget', 'StopListeningForAllInputActions');
-            foreach ($shortcuts as $action => [, $callback]) {
-                $events[] = FilterExpr('Let', ['Value' => FilterPointer($timerFunction, 'InputMapping'), 'Variable' => FilterVariable($timerFunction, 'InputMapping'), 'Expression' => $state('SSRadarKey' . $action)]);
-                $events[] = $b->method($settings, 'InputSettings', 'AddActionMapping', [FilterVariable($timerFunction, 'InputMapping'), $bool(true)]);
-                $events[] = $b->method(FilterExpr('Self'), 'UserWidget', 'ListenForInputAction', [FilterExpr('NameConst', ['Value' => 'SaveStatsRadar' . $action]), FilterExpr('ByteConst', ['Value' => 0]), $bool(false), FilterExpr('InstanceDelegate', ['FunctionName' => $callback])]);
+            $events[] = $localCall('SSRadarRegisterKeys');
+            foreach ($inputCallbacks as $action => $callback) {
+                $events[] = $b->method(FilterExpr('Self'), 'UserWidget', 'ListenForInputAction', [FilterExpr('NameConst', ['Value' => $shortcutActions[$action][0]]), FilterExpr('ByteConst', ['Value' => 0]), $bool(false), FilterExpr('InstanceDelegate', ['FunctionName' => $callback])]);
             }
         }
-        $b->define($event, [], ['Timer' => 'Struct', ...($event === 'Construct' ? ['Settings' => 'Object', 'InputMapping' => 'Struct'] : [])], $events, $event);
+        $b->define($event, [], ['Timer' => 'Struct'], $events, $event);
     }
     $b->define('Destruct', [], [], [$b->method(FilterExpr('Self'), 'UserWidget', 'StopListeningForAllInputActions'), $b->call('KismetSystemLibrary', 'K2_ClearTimer', [FilterExpr('Self'), FilterExpr('StringConst', ['Value' => 'SSRadarTick'])])], 'Destruct');
     return [$b->finish(), ['assetPackage' => '/Game/SaveStats/WBP_SSOverlayRadar', 'className' => 'WBP_SSOverlayRadar_C',
         'radiusCm' => 10000, 'radiusPresetsCm' => [5000, 10000, 20000, 40000], 'sizePresets' => [1, 1.25, 1.5], 'defaultSize' => 1.25,
-        'shortcuts' => ['toggle' => 'F8', 'zoomIn' => 'F3', 'zoomOut' => 'F4', 'size' => 'F10'], 'heightDeadbandCm' => 1000, 'pinLimit' => 24, 'candidateBudget' => 128, 'updateIntervalSeconds' => 0.1,
+        'shortcuts' => array_combine(array_map('lcfirst', array_keys($shortcutActions)), array_column($shortcutActions, 1)),
+        'rebinding' => ['function' => 'SSRadarRebind(Action, InputKey)', 'reset' => 'SSRadarResetKeys', 'register' => 'SSRadarRegisterKeys', 'swapField' => 'SSRadarRebindSwap',
+            'actions' => array_map(static fn(array $a): string => $a[0], array_values($shortcutActions)), 'clash' => 'the action that held the new key takes the old one',
+            'registration' => 'every mapping of each radar action name is removed, then exactly one is added'],
+        'settings' => ['package' => RADAR_SETTINGS_PACKAGE, 'class' => RADAR_SETTINGS_CLASS, 'slot' => RADAR_SETTINGS_SLOT, 'userIndex' => 0, 'fields' => array_keys(RadarSettingsFields()),
+            'catalogKey' => RadarSettingsCatalogKey(), 'load' => 'SSRadarLoadSettings in OnInitialized (revision unchanged)', 'save' => 'SSRadarSaveSettings after every applied change',
+            'savedBy' => ['SSRadarSetSelection', 'SSRadarSetView', 'SSRadarSetHideDone', 'SSRadarRebind', 'SSRadarResetKeys']],
+        'heightDeadbandCm' => 1000, 'pinLimit' => 24, 'candidateBudget' => 128, 'updateIntervalSeconds' => 0.1,
         'candidateIntervalSeconds' => 0.5, 'displacementInvalidationCm' => 5000, 'indexedPoints' => count($index['positions']), 'gridWidth' => $index['width'], 'gridHeight' => $index['height'],
         'functionNames' => array_keys($b->functions), 'counts' => ['request' => 'SSRadarRequestCounts(Zone)', 'left' => 'SSRadarCountLeft', 'total' => 'SSRadarCountTotal', 'zone' => 'SSRadarCountZone', 'revision' => 'SSRadarCountRevision',
             'indexedBy' => 'catalog position', 'rows' => count($countRows), 'perTickBudget' => 96, 'requestLifetimeTicks' => 40, 'hubRule' => 'Hub puzzles count only while GetAllActiveSandboxPuzzleDataOfTypeInZone lists them'], 'selectionFunction' => 'SSRadarSetSelection', 'updateFunction' => 'SSRadarUpdate', 'initiallyHidden' => true,
