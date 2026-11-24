@@ -58,8 +58,12 @@ function ExpandOverlayMarkers(object $document, ?int $limit = null): array
     $expanded = [];
     foreach ([$puzzles, $sites] as $collectionIndex => $records) {
         $ordinal = 0;
+        // Sites are numbered from 1 in siteId order, before any smoke limit, so the
+        // map tag and the radar's live-site tables always name the same place.
+        $siteNumber = 0;
         foreach ($records as $key => $record) {
             $site = $collectionIndex === 1;
+            if ($site) { $siteNumber++; }
             if (!is_object($record)) {
                 throw new RuntimeException('Marker records must be objects.');
             }
@@ -124,8 +128,8 @@ function ExpandOverlayMarkers(object $document, ?int $limit = null): array
                 $locations = [$locations[0]];
             }
             foreach ($locations as $point) {
-                $pointLabel = $point->label !== '' ? $point->label : ($site ? 'Possible container' : 'Location');
-                $label = $record->label . ' | ' . ($site ? 'Possible spawn; current assignment unknown' : ucfirst($record->group)) . ' | ' . $pointLabel;
+                $pointLabel = $point->label !== '' ? $point->label : ($site ? 'Container' : 'Location');
+                $label = $record->label . ' | ' . ($site ? 'Shown only while a random-spot puzzle is here' : ucfirst($record->group)) . ' | ' . $pointLabel;
                 $renderPoint = (object)[
                     'actorName' => $prefix . '_' . $point->index,
                     'ptype' => $record->ptype, 'group' => $record->group, 'iconKey' => $record->iconKey,
@@ -137,7 +141,7 @@ function ExpandOverlayMarkers(object $document, ?int $limit = null): array
                     'visibleByDefault' => false,
                     'tags' => array_merge(
                         ['SaveStatsOverlay', 'SaveStats.Source.' . $record->group],
-                        $site ? [] : ['SaveStats.Puzzle.' . $record->pid],
+                        $site ? ['SaveStats.Site.' . $siteNumber] : ['SaveStats.Puzzle.' . $record->pid],
                         $hubAvailabilityZone > 0 ? ['SaveStats.HubZone.' . $hubAvailabilityZone] : [],
                         !$site && $record->ptype === 'seek5' && $point->role === 'object' && $point->index >= 1 && $point->index <= 5 ? ['SaveStats.PentadRelic', 'SaveStats.PentadRelic.' . $point->index] : [],
                         array_map(fn(string $type): string => 'SaveStats.Type.' . $type, $site ? array_values(array_unique($record->allowedTypes)) : [$record->ptype]),
@@ -148,6 +152,7 @@ function ExpandOverlayMarkers(object $document, ?int $limit = null): array
                 ];
                 if ($site) {
                     $renderPoint->siteId = $record->siteId;
+                    $renderPoint->siteNumber = $siteNumber;
                 } else {
                     $renderPoint->pid = $record->pid;
                     if ($completion !== null) { $renderPoint->completion = (object)$completion; }
@@ -162,6 +167,27 @@ function ExpandOverlayMarkers(object $document, ?int $limit = null): array
         }
     }
     return $expanded;
+}
+
+/**
+ * Random-spot Hub puzzles: catalog IDs with no fixed location. The radar matches the
+ * game's live spawned actors against these IDs, then pins the site each one stands on.
+ */
+function OverlayRandomSpotHubTable(object $document): array
+{
+    $types = GetOverlayTypes();
+    $rows = [];
+    foreach ((array)($document->unlocated ?? []) as $key => $record) {
+        if (!is_object($record) || ($record->group ?? null) !== 'hub' || !is_string($record->ptype ?? null)) { continue; }
+        $pid = $record->pid ?? null;
+        if (!is_int($pid) || $pid <= 0 || $pid > 2147483647 || (string)$pid !== (string)$key) {
+            throw new RuntimeException('Unlocated puzzles require a matching positive int32 pid.');
+        }
+        if (!isset($types[$record->ptype]) || $record->ptype === 'spawnSite') { continue; }
+        $rows[$pid] = ['pid' => $pid, 'ptype' => $record->ptype];
+    }
+    ksort($rows, SORT_NUMERIC);
+    return array_values($rows);
 }
 
 function OverlayImport(object $asset, string $name, int $outer, string $package, string $class): int
@@ -368,7 +394,7 @@ function InjectMarkersMain(array $argv): int
         if ($manifestPath !== null) {
             $manifestTemporary = tempnam(dirname($manifestPath), '.render-');
             if ($manifestTemporary === false || file_put_contents($manifestTemporary, json_encode(
-                (object)['schemaVersion' => 1, 'renderPoints' => $renderPoints], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+                (object)['schemaVersion' => 1, 'renderPoints' => $renderPoints, 'randomSpotHub' => OverlayRandomSpotHubTable($document)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
             )) === false) {
                 throw new RuntimeException('Cannot write render manifest.');
             }

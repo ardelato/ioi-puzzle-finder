@@ -216,7 +216,7 @@ function BuildOverlaySpawnSites(array $rows, array $unlocated): object
         $siteId = 'site-' . substr(hash('sha256', json_encode([$container, (string)($row['localID'] ?? ''), $zone, $position], JSON_THROW_ON_ERROR)), 0, 16);
         $allowed = array_values(array_unique(array_merge($sites[$siteId]['allowedTypes'] ?? [], $allowed)));
         sort($allowed, SORT_STRING);
-        $label = 'Possible ' . implode(' / ', array_map(static fn(string $ptype): string => $catalog[$ptype]['name'], $allowed)) . ' spawn site; current puzzle unknown';
+        $label = 'Random-spot ' . implode(' / ', array_map(static fn(string $ptype): string => $catalog[$ptype]['name'], $allowed)) . ' site';
         $sites[$siteId] = [
             'siteId' => $siteId, 'ptype' => 'spawnSite', 'group' => 'spawn', 'iconKey' => 'spawnSite',
             'label' => $label, 'zoneIndex' => $zone, 'containerType' => $container, 'allowedTypes' => $allowed,

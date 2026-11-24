@@ -142,8 +142,20 @@ $pointsRoundtrip = json_decode(json_encode($points, JSON_THROW_ON_ERROR), false,
 CheckOverlay(array_map(static fn(object $point): array => [$point->pid ?? 0, $point->tags], $pointsRoundtrip) === array_map(static fn(object $point): array => [$point->pid ?? 0, $point->tags], $points), 'Render manifest JSON roundtrip changed PID identities or tags.');
 $spawnPoint = $points[count($points) - 1];
 CheckOverlay($spawnPoint->actorName === 'SaveStatsSite_aaaaaaaaaaaaaaaa_0' && !$spawnPoint->visibleByDefault, 'Possible spawn actor identity/default visibility is incorrect.');
-CheckOverlay($spawnPoint->tags === ['SaveStatsOverlay', 'SaveStats.Source.spawn', 'SaveStats.Type.logicGrid', 'SaveStats.Type.match3'], 'Possible spawn tags must reflect allowed puzzle types.');
-CheckOverlay(!isset($spawnPoint->pid) && str_contains($spawnPoint->label, 'current assignment unknown'), 'Possible spawn site must not claim a puzzle assignment.');
+CheckOverlay($spawnPoint->tags === ['SaveStatsOverlay', 'SaveStats.Source.spawn', 'SaveStats.Site.1', 'SaveStats.Type.logicGrid', 'SaveStats.Type.match3'], 'Random-spot site tags must carry the site number and the allowed puzzle types.');
+CheckOverlay(!isset($spawnPoint->pid) && $spawnPoint->siteNumber === 1 && str_contains($spawnPoint->label, 'Shown only while a random-spot puzzle is here'), 'A random-spot site must not claim a puzzle; the radar fills it in live.');
+$second = unserialize(serialize($site));
+$second->siteId = 'site-0000000000000000';
+$twoSites = unserialize(serialize($multi));
+$twoSites->spawnSites->{$second->siteId} = $second;
+$siteNumbers = array_column(array_filter(ExpandOverlayMarkers($twoSites), static fn(object $p): bool => isset($p->siteNumber)), 'siteNumber', 'siteId');
+CheckOverlay($siteNumbers === ['site-0000000000000000' => 1, 'site-aaaaaaaaaaaaaaaa' => 2], 'Site numbers must follow siteId order, from 1.');
+$limitedSites = array_column(array_filter(ExpandOverlayMarkers($twoSites, 1), static fn(object $p): bool => isset($p->siteNumber)), 'siteNumber', 'siteId');
+CheckOverlay($limitedSites === ['site-0000000000000000' => 1], 'A smoke limit must keep the numbers of the sites it keeps.');
+$unlocatedDocument = unserialize(serialize($multi));
+$unlocatedDocument->unlocated = (object)['12' => (object)['pid' => 12, 'ptype' => 'logicGrid', 'group' => 'hub'], '7' => (object)['pid' => 7, 'ptype' => 'match3', 'group' => 'hub'],
+    '9' => (object)['pid' => 9, 'ptype' => 'logicGrid', 'group' => 'static'], '15' => (object)['pid' => 15, 'group' => 'hub', 'reason' => 'missing_metadata']];
+CheckOverlay(OverlayRandomSpotHubTable($unlocatedDocument) === [['pid' => 7, 'ptype' => 'match3'], ['pid' => 12, 'ptype' => 'logicGrid']], 'The random-spot table lists unlocated Hub puzzles of known type, sorted by ID.');
 CheckOverlay(count(ExpandOverlayMarkers($multi, 1)) === 2, 'Smoke limit must bound puzzle records and spawn sites separately.');
 $ordinary = unserialize(serialize($document));
 $ordinary->markers->{'100'}->locations[0]->label = '';

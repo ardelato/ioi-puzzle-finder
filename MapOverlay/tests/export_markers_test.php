@@ -86,7 +86,7 @@ Check($data['counts']['static'] === ['remaining' => 7, 'located' => 3, 'unlocate
 Check($data['counts']['hub'] === ['remaining' => 8, 'located' => 6, 'unlocated' => 2, 'renderPoints' => 11], 'Hub counts must include dynamic puzzles without inventing positions.');
 $sites = array_values((array)$data['spawnSites']);
 Check(count($sites) === 1 && $sites[0]['allowedTypes'] === ['logicGrid'], 'Candidate sites must match a remaining unlocated hub type in the same zone.');
-Check(!isset($sites[0]['pid']) && $sites[0]['visibleByDefault'] === false && str_contains($sites[0]['label'], 'current puzzle unknown'), 'Spawn sites must not impersonate active puzzle assignments.');
+Check(!isset($sites[0]['pid']) && $sites[0]['visibleByDefault'] === false && $sites[0]['label'] === 'Random-spot Logic Grid site', 'A site names no puzzle: the radar pins it only while a live puzzle stands there.');
 Check(preg_match('/^site-[a-f0-9]{16}$/', $sites[0]['siteId']) === 1, 'Spawn IDs must have stable hash syntax.');
 Check((array)BuildOverlaySpawnSites([$spawn], $unlocated) === (array)$data['spawnSites'], 'Duplicate spawn rows must not change site identity.');
 Check(
