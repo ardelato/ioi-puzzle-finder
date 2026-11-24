@@ -220,7 +220,9 @@ try {
     $checkWheel($generated);
     // Rebindable keys: one selector per radar action, bound to a handler that rebinds on the radar.
     $showKeys = array_search($exports['SSOverlayShowKeys'], $generated->Exports, true) + 1;
-    CheckFilter(array_keys((array)$details->radarKeys->defaults) === array_keys(RadarShortcutActions()), 'Every radar action must have a key selector.');    foreach (RadarShortcutActions() as $action => [, $key]) {
+    CheckFilter(array_keys((array)$details->radarKeys->defaults) === array_keys(RadarShortcutActions()), 'Every radar action must have a key selector.');
+    CheckFilter(substr_count(json_encode($exports['SSOverlayShowKeys']->ScriptBytecode, JSON_THROW_ON_ERROR), 'SSOverlayKeysShowing') === 2, 'Redrawing the keys must set and clear SSOverlayKeysShowing.');
+    foreach (RadarShortcutActions() as $action => [, $key]) {
         $selector = $exports['SSOverlayKey' . $action] ?? null;
         CheckFilter($selector !== null && $generated->Imports[-1 - $selector->ClassIndex]->ObjectName === 'InputKeySelector', $action . ' must use the native key selector.');
         $selectorData = array_column($selector->Data, null, 'Name');
@@ -230,6 +232,9 @@ try {
         CheckFilter($handler->LoadedProperties[0]->Name === 'Chord' && str_contains($handler->LoadedProperties[0]->PropertyFlags, 'CPF_Parm') && $generated->Imports[-1 - $handler->LoadedProperties[0]->Struct]->ObjectName === 'InputChord', 'OnKeySelected handlers must take the selected chord.');
         $handlerCode = json_encode($handler->ScriptBytecode, JSON_THROW_ON_ERROR);
         CheckFilter(str_contains($handlerCode, '"VirtualFunctionName":"SSRadarRebind"') && str_contains($handlerCode, '"Path":["SSRadarRebindSwap"]') && str_contains($handlerCode, '"StackNode":' . $showKeys . ','), $action . ' must rebind on the radar, report swaps and redraw the keys.');
+        CheckFilter(str_contains(json_encode($handler->ScriptBytecode[0], JSON_THROW_ON_ERROR), 'SSOverlayKeysShowing'), $action . ' must ignore the OnKeySelected that redrawing the keys triggers.');
+        $keyColour = array_column(array_column($selectorData['TextStyle']->Value, null, 'Name')['ColorAndOpacity']->Value, null, 'Name');
+        CheckFilter(($keyColour['ColorUseRule']->EnumValue ?? null) === 'ESlateColorStylingMode::UseColor_Specified', $action . ' key text must use its own colour, not the button foreground.');
         CheckFilter(str_contains($handlerCode, '"Value":"Escape"') && str_contains($handlerCode, '"StackNode":' . (-1 - array_search('Key_IsMouseButton', array_column($generated->Imports, 'ObjectName'), true)) . ','), 'Esc must cancel and mouse buttons must be refused.');
         $checkContextArguments($handler->ScriptBytecode);
     }

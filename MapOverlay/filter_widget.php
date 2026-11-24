@@ -492,6 +492,9 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     }
     $class->LoadedProperties[] = FilterField($boolTemplate, 'SSOverlayBatch');
     $default->Data[] = OverlayProperty('Bool', 'SSOverlayBatch', 0);
+    // Set while SSOverlayShowKeys runs: SetSelectedKey fires OnKeySelected whenever the shown key changes.
+    $class->LoadedProperties[] = FilterField($boolTemplate, 'SSOverlayKeysShowing');
+    $default->Data[] = OverlayProperty('Bool', 'SSOverlayKeysShowing', 0);
     $class->LoadedProperties[] = FilterField($boolTemplate, 'SSOverlayReset');
     $default->Data[] = OverlayProperty('Bool', 'SSOverlayReset', 1);
     $class->LoadedProperties[] = FilterField($boolTemplate, 'SSOverlayRadarInitialized');
@@ -828,7 +831,8 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $not = static fn(object $value): object => FilterCall($native['Not_PreBool'], [$value]);
     $showKeysIndex = count($asset->Exports) + 1;
     $kl = static fn(string $name): object => FilterVariable($showKeysIndex, $name);
-    $showKeys = [$unless($radarValid(), 'Done')];
+    $keysShowing = static fn(bool $on): object => FilterExpr('LetBool', ['VariableExpression' => FilterVariable($classIndex, 'SSOverlayKeysShowing', true), 'AssignmentExpression' => FilterExpr($on ? 'True' : 'False')]);
+    $showKeys = [$unless($radarValid(), 'Done'), $keysShowing(true)];
     foreach (array_keys($keyActions) as $action) {
         array_push($showKeys,
             FilterExpr('Let', ['Value' => FilterPointer($showKeysIndex, 'InputMapping'), 'Variable' => $kl('InputMapping'), 'Expression' => $radarField('SSRadarKey' . $action)]),
@@ -836,7 +840,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
             FilterContext(FilterVariable($classIndex, 'SSOverlayKey' . $action, true), FilterCall($native['SetSelectedKey'], [$kl('Chord')], 'FinalFunction'), $voidPointer));
     }
     $addFunction('SSOverlayShowKeys', [$structLocal('InputMapping', 'InputActionKeyMapping', 48), $structLocal('Chord', 'InputChord', 40)],
-        FilterCompileCode([...$showKeys, ['label' => 'Done'], ...FilterReturn()]));
+        FilterCompileCode([...$showKeys, ['label' => 'Done'], $keysShowing(false), ...FilterReturn()]));
     $concat = static fn(object ...$parts): object => array_reduce(array_slice($parts, 1), static fn(object $carry, object $part): object => FilterCall($native['Concat_StrStr'], [$carry, $part]), $parts[0]);
     $string = static fn(string $value): object => FilterExpr('StringConst', ['Value' => $value]);
     foreach (array_keys($keyActions) as $actionIndex => $action) {
@@ -854,7 +858,9 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         $fn = count($asset->Exports) + 1;
         $l = static fn(string $name): object => FilterVariable($fn, $name);
         $let = static fn(string $name, object $value): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $name), 'Variable' => $l($name), 'Expression' => $value]);
-        $code = [FilterCall($syncRadarIndex, [], 'LocalFinalFunction'),
+        // Ignore the OnKeySelected that SSOverlayShowKeys' own SetSelectedKey triggers.
+        $code = [$unless(FilterVariable($classIndex, 'SSOverlayKeysShowing', true), 'Picked'), FilterExpr('Return', ['ReturnExpression' => FilterExpr('Nothing')]), ['label' => 'Picked'],
+            FilterCall($syncRadarIndex, [], 'LocalFinalFunction'),
             $let('Note', $string('The radar is not running; open the map during play to change keys.')), $unless($radarValid(), 'Show'),
             $let('InputKey', $member('InputChord', 'Key', $l('Chord'))), $let('KeyName', $member('Key', 'KeyName', $l('InputKey'))),
             // Esc (or no key) cancels.
@@ -1031,7 +1037,11 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $variable('SSOverlayKeysReset', 'Button');
     $buttons[] = 'SSOverlayKeysReset';
     $radarRows[] = $hbox('SSOverlayKeysHeader', [[$text('SSOverlayKeysLabel', 'KEYS', 12, [], false, $gold()), false, 0], [$rule('SSOverlayKeysRule'), true, 8], [$resetButton, false, 4]]);
-    $keyText = FilterStruct('TextStyle', 'TextBlockStyle', [$sizedFont(13), $slateColour(0.91, 0.87, 0.78)]);
+    // A style's FSlateColor defaults to the button's (dark) foreground; force the specified colour.
+    $keyColour = $slateColour(0.91, 0.87, 0.78);
+    $keyColour->Value[] = (object)['$type' => 'UAssetAPI.PropertyTypes.Objects.BytePropertyData, UAssetAPI', 'ByteType' => 'FName',
+        'EnumType' => 'ESlateColorStylingMode', 'EnumValue' => 'ESlateColorStylingMode::UseColor_Specified', 'Name' => 'ColorUseRule'];
+    $keyText = FilterStruct('TextStyle', 'TextBlockStyle', [$sizedFont(13), $keyColour]);
     foreach ($keyActions as $action => [, $defaultKey, $keyLabel]) {
         $selector = $appendWidget('InputKeySelector', 'SSOverlayKey' . $action, $treeIndex, [OverlayProperty('Bool', 'bIsVariable', 1), $gameButton(), unserialize(serialize($keyText)),
             $margin('Margin', 8, 2, 8, 2), OverlayText('KeySelectionText', 'Press a key'), OverlayText('NoKeySpecifiedText', 'Not set'), OverlayProperty('Bool', 'bAllowModifierKeys', 0),
@@ -1481,7 +1491,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $names = [];
     $collectNames = static function (mixed $value) use (&$collectNames, &$names): void {
         if (is_object($value)) {
-            foreach (['Name', 'StructType', 'EnumType', 'SerializedType', 'ArrayType', 'FunctionName', 'VirtualFunctionName'] as $key) { if (isset($value->$key) && is_string($value->$key)) { $names[] = $value->$key; } }
+            foreach (['Name', 'StructType', 'EnumType', 'EnumValue', 'SerializedType', 'ArrayType', 'FunctionName', 'VirtualFunctionName'] as $key) { if (isset($value->$key) && is_string($value->$key)) { $names[] = $value->$key; } }
             if (isset($value->Value) && is_string($value->Value) && preg_match('/(?:NameConst|NamePropertyData|EnumPropertyData)/', $value->{'$type'} ?? '')) { $names[] = $value->Value; }
             if (isset($value->Path) && is_array($value->Path)) { foreach ($value->Path as $name) { if (is_string($name)) { $names[] = $name; } } }
             foreach ((array)$value as $child) { $collectNames($child); }
