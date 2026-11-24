@@ -126,8 +126,9 @@ addon version, package hash and
 tested base-mod identity without local paths or save provenance.
 
 Follow [BETA-TESTING](BETA-TESTING.md), review the exact package, then create the
-GitHub prerelease as a separate publishing step. Creating or pushing a tag must
-not silently publish unreviewed local files.
+GitHub release as a separate publishing step with `scripts/publish-release.ps1`;
+see [RELEASING](RELEASING.md). It only creates a draft, so unreviewed local
+files are never published by a script alone.
 
 ## Package filename
 

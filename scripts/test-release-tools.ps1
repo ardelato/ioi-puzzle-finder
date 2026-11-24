@@ -73,6 +73,16 @@ try {
     Assert-ReleaseTest ((Get-Content -Raw -LiteralPath "$zip.sha256").StartsWith($zipHash)) 'Archive checksum is wrong.'
     Expect-ReleaseFailure { & $packager -BuildDirectory $build -OutputDir $output } 'Packager overwrote an existing release.'
 
+    $publisher = Join-Path $PSScriptRoot 'publish-release.ps1'
+    $notesPath = Join-Path $fixture 'release-notes.md'
+    & $publisher -DistDir $output -NotesOnly -NotesPath $notesPath | Out-Null
+    $notes = Get-Content -Raw -LiteralPath $notesPath
+    Assert-ReleaseTest ($notes.Contains($zipHash)) 'Release notes omit the archive checksum.'
+    Assert-ReleaseTest ($notes -match "(?m)^## What's new\s+\S") 'Release notes omit the CHANGELOG section.'
+    Assert-ReleaseTest (-not $notes.Contains($fixture)) 'Local paths leaked into release notes.'
+    [IO.File]::AppendAllText($zip, 'tampered')
+    Expect-ReleaseFailure { & $publisher -DistDir $output -NotesOnly } 'Publisher accepted an archive that no longer matches its checksum.'
+
     $upstream = Join-Path $fixture 'upstream'
     New-Item -ItemType Directory -Path (Join-Path $upstream 'Assets') | Out-Null
     [IO.File]::WriteAllText((Join-Path $upstream 'Assets/MapMarker.uasset'), 'synthetic invalid template')

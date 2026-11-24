@@ -8,8 +8,10 @@ ordinary save backup before testing; no debug save or console command is needed.
 
 - Start the game and open/close the map. Confirm normal map controls, hover
   banners, quest panels and the map legend remain usable.
-- Select several puzzle types one at a time. Confirm the selected icon and
-  markers agree; clearing the selection removes the addon pins.
+- Open the **Puzzles** tab and tick several puzzle types, together and one at
+  a time. Confirm each type's pins use its icon and **Clear** removes the
+  addon pins. Change zone on the map and check the list, the *solved / total*
+  counts and the pins follow it. Try the search box and **Hide completed**.
 - Scroll the puzzle list to both ends. The wheel should stay with the list
   while the pointer is over it, without zooming the world map.
 - Enable the radar, close the map and move/turn. Check F8, F3, F4 and F10,
@@ -35,21 +37,23 @@ ordinary save backup before testing; no debug save or console command is needed.
   one relic and check that only that relic disappears. Leave, complete or
   switch Pentads and check that focus changes correctly.
 - Collect lore and a monolith fragment and check their markers disappear.
-- Enable possible spawn sites for a selected type. Confirm cyan potential-site
-  pins appear, then disappear when the option is off. A possible-site pin is
-  not a promise that a puzzle occupies that location.
+- Tick Logic Grid and switch on **Show random-spot puzzles**. After a few
+  seconds, dashed **?** circles should appear on the map only where a Logic
+  Grid is actually out, and the radar should show them with the Logic Grid
+  icon. Walk to one and check a puzzle is there; solve it and check both pins
+  go. Switch it off and check every **?** disappears.
 - Play in sparse and dense areas at several zoom levels. Report stutters or
   delayed radar updates with location and type; do not infer an FPS improvement
   solely from the engine regression tests.
-- Restart the game. It should start without a selected puzzle type. If testing
-  another existing save, verify marker visibility follows that save's progress.
+- Load another existing save and check marker visibility follows that save's
+  progress, not the previous one's.
+- Enter a Hub Crystal Labyrinth and a labyrinth in the Vault of the Vitric.
+  The radar should show the current floor and *Floor N of M*, update as you
+  change floors and return to normal when you leave.
 
 ## What has already been checked
 
-The maintainer reported that the beta was working in their play session on
-2026-11-22. The full gameplay checklist remains open.
-
-The original universal build passed source/data/package checks, isolated
+The universal build passed source/data/package checks, isolated
 fresh/mixed/completed progress tests, special collection lookups, current Hub
 availability, bounded index processing and active Pentad collection/reset tests.
 The data covers 293 Pentads and 1,465 relics; focused native collection tests used
@@ -61,7 +65,7 @@ the actual beta artifact.
 ## Report a problem
 
 Include the addon version and package SHA256, base-mod version, other installed
-map/HUD mods, selected puzzle type, radar radius/size, and clear reproduction
+map/HUD mods, ticked puzzle types, radar radius/size, and clear reproduction
 steps. For a marker issue, include the hover puzzle ID when available. For a UI
 issue, include display resolution and UI scaling with a screenshot.
 
