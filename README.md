@@ -60,7 +60,7 @@ more helpers are on the way.
 ### On the map
 
 <div align="center">
-  <img src="docs/images/map-puzzles-right.jpg" alt="The world map of Verdant Glen with Hidden Cube, Pentad and Ring pins, and the Puzzles tab listing the zone's types with solved counts" width="600">
+  <img src="docs/images/map-puzzles.jpg" alt="The world map of Verdant Glen with Hidden Cube, Pentad and Ring pins, and the Puzzles tab listing the zone's types with solved counts" width="800">
 </div>
 
 ### On the radar
