@@ -24,7 +24,7 @@ $version = (Get-Content -Raw -LiteralPath (Join-Path $repo 'VERSION')).Trim()
 if ($version -cnotmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$') { throw "VERSION is not a SemVer: $version" }
 $tag = "v$version"
 $prerelease = $version.Contains('-')
-$name = "ioi-puzzle-radar-$version"
+$name = "ioi-puzzle-finder-$version"
 $zip = Join-Path ([IO.Path]::GetFullPath($DistDir)) "$name.zip"
 $zipChecksum = "$zip.sha256"
 foreach ($file in @($zip, $zipChecksum)) {

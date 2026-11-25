@@ -6,12 +6,12 @@ require_once __DIR__ . '/types.php';
 
 /**
  * Persistent radar settings: a tiny SaveGame subclass written to its own slot
- * (Saved/SaveGames/IOIPuzzleRadar.sav). It never touches the game's progress save.
+ * (Saved/SaveGames/IOIPuzzleFinder.sav). It never touches the game's progress save.
  * Shared by the radar (reader and only writer) and the map (reader when no radar exists yet).
  */
 const RADAR_SETTINGS_PACKAGE = '/Game/SaveStats/SSRadarSettings';
 const RADAR_SETTINGS_CLASS = 'SSRadarSettings_C';
-const RADAR_SETTINGS_SLOT = 'IOIPuzzleRadar';
+const RADAR_SETTINGS_SLOT = 'IOIPuzzleFinder';
 
 /** Rebindable radar actions in shortcut order: field suffix => [input action, default key, map label]. */
 function RadarShortcutActions(): array
