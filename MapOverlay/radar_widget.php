@@ -476,7 +476,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
     // Labyrinth walls sit above the ring and beneath the heading arrow and pins.
     AddRadarLabyrinthWidgets($b, $font, $labyrinths);
     $b->child('Image', 'SSRadarHeading', [$brush($texture('SSRadHead'))], 108, 108, 20, 20);
-    $b->child('TextBlock', 'SSRadarCaption', [OverlayText('Text', 'Puzzle radar'), $font(12), FilterEnum('Justification', 'ETextJustify', 'Center')], 108, 232, 232, 24);
+    $b->child('TextBlock', 'SSRadarCaption', [OverlayText('Text', 'Puzzle compass'), $font(12), FilterEnum('Justification', 'ETextJustify', 'Center')], 108, 232, 232, 24);
     $b->child('TextBlock', 'SSRadarRange', [OverlayText('Text', '100 m'), $font(10), FilterEnum('Justification', 'ETextJustify', 'Center')], 108, 252, 216, 18);
     for ($pin = 0; $pin < 24; $pin++) {
         $b->child('Image', 'SSRadarPin' . $pin, [FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed'), $brush($texture('SSIcon006'))], 108, 108, 20, 20);
@@ -808,7 +808,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         $let('Count', $math('Add_IntInt', $l('Count'), $i(1))), $let('Last', $l('Type')),
         ['label' => 'NextType'], $let('Type', $math('Add_IntInt', $l('Type'), $i(1))), $jump('CountLoop'),
         ['label' => 'Counted'], $unless($math('EqualEqual_IntInt', $l('Count'), $i(0)), 'One'),
-        $labelText('SSRadarCaption', 'Puzzle radar'), $jump('Done'),
+        $labelText('SSRadarCaption', 'Puzzle compass'), $jump('Done'),
         ['label' => 'One'], $unless($math('EqualEqual_IntInt', $l('Count'), $i(1)), 'Many')];
     foreach ($index['typeKeys'] as $typeIndex => $key) {
         $parts = [...$parts, $unless($math('EqualEqual_IntInt', $l('Last'), $i($typeIndex)), 'Type' . ($typeIndex + 1)),
@@ -1172,7 +1172,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         'typeBits' => array_combine($index['typeKeys'], $typeBits), 'typeMask' => $radarMask, 'typeBitsField' => 'SSRadarTypeBits', 'pointTypesField' => 'SSRadarPointTypes',
         'scanOrder' => 'selected types in radar type order over one bounds computation; one commit after the last selected type',
         'pinIcons' => ['texturesField' => 'SSRadarTypeTextures', 'cacheFields' => 'SSRadarPinType0..23', 'rule' => 'each pin shows its point type icon; brush set only when the cached type differs'],
-        'caption' => ['none' => 'Puzzle radar', 'one' => 'type display name', 'many' => 'N puzzle types'],
+        'caption' => ['none' => 'Puzzle compass', 'one' => 'type display name', 'many' => 'N puzzle types'],
         'mapMarkers' => ['renderFunction' => 'SSRadarRenderMarkers', 'slots' => $markerSlots,
             'authority' => 'PlayerController(0).PlayerState as SophiaPlayerState -> PingSystemComponent (SocialSystemComponent) -> latestUpdatedLocationPings',
             'entryStruct' => 'LocationPingInfo', 'typeField' => 'PingType', 'mapMarkerType' => 'ELocationPingType::MapMarker = 0', 'positionField' => 'Loc',

@@ -478,7 +478,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     }
     $filters[] = ['key' => 'hideDone', 'group' => 'view', 'label' => 'Hide completed', 'default' => false,
         'state' => 'SSOverlayView_hideDone', 'tag' => 'SaveStats.View.hideDone'];
-    $filters[] = ['key' => 'enabled', 'group' => 'radar', 'label' => 'Show gameplay radar', 'default' => true,
+    $filters[] = ['key' => 'enabled', 'group' => 'radar', 'label' => 'Show puzzle compass', 'default' => true,
         'state' => 'SSOverlayRadarEnabled', 'tag' => 'SaveStats.RadarEnabled'];
     foreach ($catalog as $ptype => $type) {
         if (!preg_match('/^[A-Za-z][A-Za-z0-9]*$/', $ptype)) { throw new RuntimeException('Invalid overlay type key.'); }
@@ -861,7 +861,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         // Ignore the OnKeySelected that SSOverlayShowKeys' own SetSelectedKey triggers.
         $code = [$unless(FilterVariable($classIndex, 'SSOverlayKeysShowing', true), 'Picked'), FilterExpr('Return', ['ReturnExpression' => FilterExpr('Nothing')]), ['label' => 'Picked'],
             FilterCall($syncRadarIndex, [], 'LocalFinalFunction'),
-            $let('Note', $string('The radar is not running; open the map during play to change keys.')), $unless($radarValid(), 'Show'),
+            $let('Note', $string('The compass is not running; open the map during play to change keys.')), $unless($radarValid(), 'Show'),
             $let('InputKey', $member('InputChord', 'Key', $l('Chord'))), $let('KeyName', $member('Key', 'KeyName', $l('InputKey'))),
             // Esc (or no key) cancels.
             $let('Note', $string($keyIdle)), $unless(FilterCall($native['Key_IsValid'], [$l('InputKey')]), 'Show'),
@@ -894,7 +894,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
     $bindClick('SSOverlayKeysReset', 'SSOverlayResetKeys');
 
     // Tabs: Legend shows the game's own list, Puzzles and Radar show ours.
-    $tabs = ['Legend' => 'LEGEND', 'Puzzles' => 'PUZZLES', 'Radar' => 'RADAR'];
+    $tabs = ['Legend' => 'LEGEND', 'Puzzles' => 'PUZZLES', 'Radar' => 'COMPASS'];
     $tabPanels = ['Legend' => 'VerticalBox_100', 'Puzzles' => 'SSOverlayPanel', 'Radar' => 'SSOverlayRadarPanel'];
     $tabSlots = [];
     foreach ($tabs as $tab => $label) {

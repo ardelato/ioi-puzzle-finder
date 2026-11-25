@@ -17,10 +17,10 @@ const RADAR_SETTINGS_SLOT = 'IOIPuzzleFinder';
 function RadarShortcutActions(): array
 {
     return [
-        'Toggle' => ['SaveStatsRadarToggle', 'F8', 'Show / hide radar'],
+        'Toggle' => ['SaveStatsRadarToggle', 'F8', 'Show / hide compass'],
         'ZoomIn' => ['SaveStatsRadarZoomIn', 'F3', 'Zoom in'],
         'ZoomOut' => ['SaveStatsRadarZoomOut', 'F4', 'Zoom out'],
-        'Size' => ['SaveStatsRadarSize', 'F10', 'Cycle radar size'],
+        'Size' => ['SaveStatsRadarSize', 'F10', 'Cycle compass size'],
     ];
 }
 
