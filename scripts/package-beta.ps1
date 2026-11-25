@@ -11,8 +11,8 @@ if ($version -cnotmatch '^\d+\.\d+\.\d+-beta\.\d+$') { throw 'Expected a beta Se
 $BuildDirectory = (Resolve-Path -LiteralPath $BuildDirectory).Path
 $build = Get-Content -Raw -LiteralPath (Join-Path $BuildDirectory 'build.json') | ConvertFrom-Json -Depth 40
 $compatibility = Get-Content -Raw -LiteralPath (Join-Path $repo 'compatibility.json') | ConvertFrom-Json
-if ($build.version -cne $version -or $build.catalogMode -cne 'universal' -or $build.markerLimit -ne 0 -or $build.packagedAssetCount -ne 68) {
-    throw 'A full, version-matched universal build with all 68 assets is required.'
+if ($build.version -cne $version -or $build.catalogMode -cne 'universal' -or $build.markerLimit -ne 0 -or $build.packagedAssetCount -ne 84) {
+    throw 'A full, version-matched universal build with all 84 assets is required.'
 }
 if ($build.installedBasePakSha256 -ine $compatibility.offlineRestoredPakSha256) { throw 'Build uses an unsupported base mod.' }
 $pakName = 'ZZ_IOIPuzzleRadar_P.pak'
