@@ -1,7 +1,7 @@
 # Contributing
 
-Use [Issues](https://github.com/ardelato/ioi-puzzle-radar/issues) to report a
-reproducible bug or discuss a change. Include the Puzzle Radar version and steps from
+Use [Issues](https://github.com/ardelato/ioi-puzzle-finder/issues) to report a
+reproducible bug or discuss a change. Include the Puzzle Finder version and steps from
 the [test checklist](docs/TESTING.md). Remove account IDs, personal paths
 and tokens from excerpts before posting. Keep saves, full crash directories,
 archive keys and local build inputs on your machine.

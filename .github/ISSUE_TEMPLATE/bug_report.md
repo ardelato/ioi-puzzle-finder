@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a map, radar, completion or compatibility problem
+about: Report a map, compass, completion or compatibility problem
 title: ''
 labels: bug
 assignees: ''
@@ -23,10 +23,10 @@ assignees: ''
 
 **Actual behavior**
 
-**Puzzle and radar details**
+**Puzzle and compass details**
 
 - Ticked puzzle types and puzzle ID from the hover label, if available:
-- Location, radar radius and display size:
+- Location, compass radius and display size:
 - Show random-spot puzzles on or off:
 
 **Screenshots or relevant log excerpt**

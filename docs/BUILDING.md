@@ -81,7 +81,7 @@ input directory and reused by later builds without launching the game. Pass
 
 The builder writes to a new output directory, verifies native serialization,
 original map/HUD functions, coverage and package entries, and produces
-`ZZ_IOIPuzzleRadar_P.pak` with local build evidence. It does not install files into
+`ZZ_IOIPuzzleFinder_P.pak` with local build evidence. It does not install files into
 the game. Keep local logs, response files, raw manifests and decoded assets out
 of public release archives: they may contain absolute paths or game data.
 
@@ -134,8 +134,9 @@ files are never published by a script alone.
 
 `ZZ_SaveStatsMap_P.pak` was the prototype name. It described the original
 feature of showing SaveStats puzzle locations on the world map. The private
-beta 1 shipped with that filename. `ZZ_IOIPuzzleRadar_P.pak` names the addon and
-its gameplay radar directly.
+beta 1 shipped with that filename, and 0.1.0 shipped as `ZZ_IOIPuzzleRadar_P.pak`.
+`ZZ_IOIPuzzleFinder_P.pak` names the addon directly; it was renamed from Puzzle
+Radar because Offline Restored Mod has its own Puzzle Radar powerup.
 
 The `ZZ_` prefix keeps the filename sorted after `RRMOD_PuzzleFix.pak`, as with
 the original overlay. The `_P` suffix follows
