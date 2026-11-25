@@ -27,7 +27,7 @@ build, then package the verified build:
 .\scripts\package-release.ps1 -BuildDirectory .\output\build-<timestamp>
 ```
 
-This writes `dist/ioi-puzzle-radar-<version>.zip` and its `.zip.sha256`. Install
+This writes `dist/ioi-puzzle-finder-<version>.zip` and its `.zip.sha256`. Install
 the `.pak` from that ZIP and run through [TESTING.md](TESTING.md).
 
 ## 3. Create the draft release

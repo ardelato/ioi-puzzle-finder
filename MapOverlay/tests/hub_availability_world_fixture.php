@@ -42,7 +42,7 @@ function AddHubAvailabilityProofToHud(object $base): object
 function BuildHubAvailabilityWorldFixture(string $output, string $build): array
 {
     $repo = dirname(__DIR__, 2);
-    $pak = $build . '/ZZ_IOIPuzzleRadar_P.pak';
+    $pak = $build . '/ZZ_IOIPuzzleFinder_P.pak';
     if (!is_file($pak)) { throw new RuntimeException('Missing production package in build directory.'); }
     $document = json_decode(file_get_contents($build . '/markers.json'), true, 512, JSON_THROW_ON_ERROR);
     $index = json_decode(file_get_contents($build . '/radar-data.json'), true, 512, JSON_THROW_ON_ERROR);

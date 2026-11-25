@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0 (2026-11-25)
+
+- Rename the addon to Puzzle Finder, since Offline Restored Mod has its own
+  Puzzle Radar powerup. The package is now `ZZ_IOIPuzzleFinder_P.pak`: delete
+  `ZZ_IOIPuzzleRadar_P.pak` from `Paks` when upgrading so only one copy loads.
+- Call the HUD circle the puzzle compass: the map tab is **Compass**, its
+  switch **Show puzzle compass** and its keys **Show / hide compass** and
+  **Cycle compass size**.
+- Settings now live in `IOIPuzzleFinder.sav`, so ticked types, range, size and
+  keys start from the defaults once after upgrading. The old
+  `IOIPuzzleRadar.sav` can be deleted.
+
 ## 0.1.0 (2026-11-24)
 
 First public release. Changes since the private beta 1:

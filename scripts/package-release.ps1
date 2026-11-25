@@ -15,13 +15,13 @@ if ($build.version -cne $version -or $build.catalogMode -cne 'universal' -or $bu
     throw 'A full, version-matched universal build with all 84 assets is required.'
 }
 if ($build.installedBasePakSha256 -ine $compatibility.offlineRestoredPakSha256) { throw 'Build uses an unsupported base mod.' }
-$pakName = 'ZZ_IOIPuzzleRadar_P.pak'
+$pakName = 'ZZ_IOIPuzzleFinder_P.pak'
 $pak = Join-Path $BuildDirectory $pakName
 if ([IO.Path]::GetFullPath($build.pak) -ine $pak) { throw 'Build manifest package path disagrees with the build directory.' }
 $pakSha = (Get-FileHash -LiteralPath $pak -Algorithm SHA256).Hash
 if ($build.pakSha256 -cne $pakSha) { throw 'Package hash no longer matches the verified build manifest.' }
 $OutputDir = [IO.Path]::GetFullPath($OutputDir)
-$name = "ioi-puzzle-radar-$version"
+$name = "ioi-puzzle-finder-$version"
 $folder = Join-Path $OutputDir $name
 $zipPath = Join-Path $OutputDir "$name.zip"
 if ((Test-Path -LiteralPath $folder) -or (Test-Path -LiteralPath $zipPath)) { throw 'Release output already exists; refusing to overwrite it.' }
@@ -42,7 +42,7 @@ foreach ($document in $documents.GetEnumerator()) {
     Copy-Item -LiteralPath (Join-Path $repo $document.Value) -Destination (Join-Path $folder $document.Key)
 }
 $release = [ordered]@{
-    name = 'ioi-puzzle-radar'
+    name = 'ioi-puzzle-finder'
     version = $version
     channel = if ($version.Contains('-')) { 'prerelease' } else { 'stable' }
     package = $pakName

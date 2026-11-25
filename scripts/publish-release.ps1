@@ -24,7 +24,7 @@ $version = (Get-Content -Raw -LiteralPath (Join-Path $repo 'VERSION')).Trim()
 if ($version -cnotmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$') { throw "VERSION is not a SemVer: $version" }
 $tag = "v$version"
 $prerelease = $version.Contains('-')
-$name = "ioi-puzzle-radar-$version"
+$name = "ioi-puzzle-finder-$version"
 $zip = Join-Path ([IO.Path]::GetFullPath($DistDir)) "$name.zip"
 $zipChecksum = "$zip.sha256"
 foreach ($file in @($zip, $zipChecksum)) {
@@ -48,7 +48,7 @@ if ($changes -eq '') { throw "CHANGELOG.md section for $version is empty." }
 $compatibility = Get-Content -Raw -LiteralPath (Join-Path $repo 'compatibility.json') | ConvertFrom-Json
 $baseVersion = $compatibility.offlineRestoredVersion
 $notes = @"
-Puzzle filters for the world map and a nearby-puzzle radar for **Islands of Insight**, an addon for the full [Offline Restored Mod v$baseVersion]($($compatibility.offlineRestoredSource)/releases/tag/v$baseVersion).
+Puzzle filters for the world map and a nearby-puzzle compass for **Islands of Insight**, an addon for the full [Offline Restored Mod v$baseVersion]($($compatibility.offlineRestoredSource)/releases/tag/v$baseVersion).
 
 ## What's new
 
@@ -58,10 +58,10 @@ $changes
 
 1. Install the full Offline Restored Mod v$baseVersion, including its runtime components.
 2. Close the game and download ``$name.zip`` below.
-3. Move any previous Puzzle Radar ``.pak`` out of ``IslandsofInsight/Content/Paks/``, then copy only ``ZZ_IOIPuzzleRadar_P.pak`` from the ZIP into that folder.
+3. Move any previous ``.pak`` of this addon (0.1.0 was ``ZZ_IOIPuzzleRadar_P.pak``) out of ``IslandsofInsight/Content/Paks/``, then copy only ``ZZ_IOIPuzzleFinder_P.pak`` from the ZIP into that folder.
 4. Start the game, open the map and use the **Puzzles** tab in the map legend.
 
-See the [README](https://github.com/ardelato/ioi-puzzle-radar#readme) for usage, controls and troubleshooting.
+See the [README](https://github.com/ardelato/ioi-puzzle-finder#readme) for usage, controls and troubleshooting.
 
 ## Verify the download
 

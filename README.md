@@ -1,22 +1,22 @@
 <div align="center">
 
-# Islands of Insight Puzzle Radar
+# Islands of Insight Puzzle Finder
 
 **Find nearby puzzles and track what's left, right on the world map and in your HUD.**
 
 An addon for **Islands of Insight** (Windows) with the
 [Offline Restored Mod v1.6](https://github.com/RiccTheThicc/RRMod_PuzzleFix/releases/tag/v1.6).
 
-[![Latest release](https://img.shields.io/github/v/release/ardelato/ioi-puzzle-radar?include_prereleases&label=download)](https://github.com/ardelato/ioi-puzzle-radar/releases)
-[![Tests](https://github.com/ardelato/ioi-puzzle-radar/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/ardelato/ioi-puzzle-radar/actions/workflows/tests.yml)
+[![Latest release](https://img.shields.io/github/v/release/ardelato/ioi-puzzle-finder?include_prereleases&label=download)](https://github.com/ardelato/ioi-puzzle-finder/releases)
+[![Tests](https://github.com/ardelato/ioi-puzzle-finder/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/ardelato/ioi-puzzle-finder/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/code-MIT-blue)](LICENSE)
 
-[**Download**](https://github.com/ardelato/ioi-puzzle-radar/releases) ·
+[**Download**](https://github.com/ardelato/ioi-puzzle-finder/releases) ·
 [Install](#install) ·
-[Controls](#the-radar) ·
-[Report a bug](https://github.com/ardelato/ioi-puzzle-radar/issues/new?template=bug_report.md)
+[Controls](#the-compass) ·
+[Report a bug](https://github.com/ardelato/ioi-puzzle-finder/issues/new?template=bug_report.md)
 
-![Exploring a forest under a pink sky, with the Puzzle Radar in the lower-left corner showing Hidden Cube and Hidden Ring pins and three custom map markers on its rim](docs/images/hero.jpg)
+![Exploring a forest under a pink sky, with the Puzzle Finder in the lower-left corner showing Hidden Cube and Hidden Ring pins and three custom map markers on its rim](docs/images/hero.jpg)
 
 <sub>Hidden Cubes and Rings nearby, and three of your own map markers on the rim with their distances.</sub>
 
@@ -30,8 +30,8 @@ the community tool that reads your save and draws your unsolved puzzles on a
 map image. So my evenings went like this: run the script, open the image, line
 it up with the in-game map, then wander around trying to find the spot.
 
-Puzzle Radar puts that map **inside the game**. It adds puzzle filters to the
-world map and a radar to your HUD, and reads your progress live: solve a
+Puzzle Finder puts that map **inside the game**. It adds puzzle filters to the
+world map and a compass to your HUD, and reads your progress live: solve a
 puzzle and its pin is gone. From there it grew into the parts of the game
 that frustrated me most, **Hidden Pentads** and **Crystal Labyrinths**, and
 more helpers are on the way.
@@ -41,20 +41,20 @@ more helpers are on the way.
 - 🗺️ **Puzzle filters on the map.** A **Puzzles** tab in the map legend lists
   every puzzle type in the zone you're looking at, with how many you've solved.
   Tick any number of types to pin them on the map; hover a pin to see what it is.
-- 📡 **A radar in your HUD.** Close the map and the ticked types follow you,
+- 📡 **A compass in your HUD.** Close the map and the ticked types follow you,
   each with its own icon. **^** and **v** mark puzzles above or below you.
 - ✅ **Solved means gone.** Pins disappear as soon as the game counts a puzzle
   as solved. Rotating puzzles only show while the game has them out.
 - 🎲 **Random-spot puzzles too.** Some rotating puzzles, like Logic Grids, land
   on a different spot each time. Switch on **Show random-spot puzzles** and
   they're pinned where one actually is right now.
-- ⭐ **Hidden Pentad helper.** Start a Pentad and the radar shows just its
+- ⭐ **Hidden Pentad helper.** Start a Pentad and the compass shows just its
   remaining relics.
-- 🔷 **Crystal Labyrinth floors.** Inside a labyrinth, the radar draws the floor
+- 🔷 **Crystal Labyrinth floors.** Inside a labyrinth, the compass draws the floor
   you're on.
-- 🧭 **Your own map markers** always show on the radar, with the distance to
+- 🧭 **Your own map markers** always show on the compass, with the distance to
   far-away ones.
-- ⌨️ **Your keys, your settings.** Rebind the radar keys, and everything you
+- ⌨️ **Your keys, your settings.** Rebind the compass keys, and everything you
   pick is remembered next time you play.
 
 ### On the map
@@ -71,25 +71,25 @@ more helpers are on the way.
   <sub>Logic Grid ticked with <b>Show random-spot puzzles</b> on. Gold pins are Logic Grids that always sit in the same place; each <b>?</b> is one the game has put on a random spot right now.</sub>
 </div>
 
-### On the radar
+### On the compass
 
 <div align="center">
 
 | Ticked puzzle types | Your map markers |
 | :---: | :---: |
-| <img src="docs/images/radar-types.jpg" alt="The radar with Hidden Cube and Ring icons and ^ / v height marks" width="220"> | <img src="docs/images/radar-markers.jpg" alt="The radar with three cyan arrows on its rim labelled 1.0 km, 960 m and 762 m, plus puzzle pins inside the ring" width="220"> |
+| <img src="docs/images/compass-types.jpg" alt="The compass with Hidden Cube and Ring icons and ^ / v height marks" width="220"> | <img src="docs/images/compass-markers.jpg" alt="The compass with three cyan arrows on its rim labelled 1.0 km, 960 m and 762 m, plus puzzle pins inside the ring" width="220"> |
 
 </div>
 
 ### Crystal Labyrinths
 
 <div align="center">
-  <img src="docs/images/labyrinth-left.jpg" alt="Standing on the second floor of a Crystal Labyrinth among glass walls. In the lower-left corner the radar draws this floor's walls, with two reddish cells for trap doors, and reads Floor 2 of 3" width="600">
+  <img src="docs/images/labyrinth-left.jpg" alt="Standing on the second floor of a Crystal Labyrinth among glass walls. In the lower-left corner the compass draws this floor's walls, with two reddish cells for trap doors, and reads Crystal Labyrinth, Floor 2 of 2" width="600">
   <br>
-  <sub>Floor 2 of 3. The reddish cells on the radar are trap doors: holes in the floor you'd fall through.</sub>
+  <sub>Floor 2 of 2. The reddish cells on the compass are trap doors: holes in the floor you'd fall through.</sub>
 </div>
 
-Inside a Crystal Labyrinth the radar switches to a floor plan of the level you
+Inside a Crystal Labyrinth the compass switches to a floor plan of the level you
 are on and zooms to fit it:
 
 | Mark | Meaning |
@@ -109,7 +109,7 @@ other handmade labyrinths aren't yet.
 
 | Before you start | Started: five relics | Two found: three left |
 | :---: | :---: | :---: |
-| <img src="docs/images/pentad-1.jpg" alt="Radar before the Pentad starts" width="180"> | <img src="docs/images/pentad-2.jpg" alt="Radar after starting: five relics" width="180"> | <img src="docs/images/pentad-3.jpg" alt="Radar after two relics found: three left" width="180"> |
+| <img src="docs/images/pentad-1.jpg" alt="Compass before the Pentad starts" width="180"> | <img src="docs/images/pentad-2.jpg" alt="Compass after starting: five relics" width="180"> | <img src="docs/images/pentad-3.jpg" alt="Compass after two relics found: three left" width="180"> |
 
 </div>
 
@@ -120,8 +120,8 @@ other handmade labyrinths aren't yet.
 installed, including its runtime components. Nothing else: no PHP, SaveStats or
 build tools.
 
-1. Download the latest `ioi-puzzle-radar-<version>.zip` from
-   [**Releases**](https://github.com/ardelato/ioi-puzzle-radar/releases).
+1. Download the latest `ioi-puzzle-finder-<version>.zip` from
+   [**Releases**](https://github.com/ardelato/ioi-puzzle-finder/releases).
 2. Close the game. In Steam, right-click **Islands of Insight** and choose
    **Manage → Browse local files**.
 3. Extract the ZIP to a temporary folder and copy **only** the `.pak` file into:
@@ -134,14 +134,14 @@ build tools.
 4. Start the game, open the map, then open the **Puzzles** tab in the map legend
    (lower right) and tick one or more puzzle types.
 
-**Updating:** close the game and copy the new `.pak` over the old one.
+**Updating:** close the game and copy the new `.pak` over the old one. Coming from 0.1.0, when this addon was called Puzzle Radar? Delete `ZZ_IOIPuzzleRadar_P.pak` from `Paks` too, or both copies load. Your settings start fresh; you can delete the old `IOIPuzzleRadar.sav` from `Saved\SaveGames`.
 
-**Uninstalling:** close the game and remove the Puzzle Radar `.pak` from `Paks`.
+**Uninstalling:** close the game and remove the Puzzle Finder `.pak` from `Paks`.
 The base mod and your save are left untouched.
 
 > [!IMPORTANT]
-> Only download Puzzle Radar from this repository's
-> [Releases](https://github.com/ardelato/ioi-puzzle-radar/releases) page. A copy
+> Only download Puzzle Finder from this repository's
+> [Releases](https://github.com/ardelato/ioi-puzzle-finder/releases) page. A copy
 > from anywhere else may have been changed. Each release also lists a SHA-256
 > checksum, for anyone who wants to confirm the file is exactly what was published.
 
@@ -150,7 +150,7 @@ The base mod and your save are left untouched.
 ### The map panel
 
 The map legend in the lower right has three tabs: **Legend** (the game's own),
-**Puzzles** and **Radar**. The map ignores the cursor while it's over the panel.
+**Puzzles** and **Compass**. The map ignores the cursor while it's over the panel.
 
 **Puzzles** follows the zone selected on the map:
 
@@ -166,44 +166,44 @@ The map legend in the lower right has three tabs: **Legend** (the game's own),
   puzzle of a ticked type is out right now, starting a few seconds after you
   switch it on. On the map these pins are a dashed circle marked **?**.
 
-**Radar** holds **Show gameplay radar**, the range (50 to 400 m) and size
-choices, and the radar keys.
+**Compass** holds **Show puzzle compass**, the range (50 to 400 m) and size
+choices, and the compass keys.
 
 <div align="center">
 
-| The Puzzles tab | The Radar tab |
+| The Puzzles tab | The Compass tab |
 | :---: | :---: |
-| <img src="docs/images/puzzles-tab.jpg" alt="The Puzzles tab for Verdant Glen: 403 left in this zone, a search box, the puzzle types with solved counts and three of them ticked, and the switches below" width="300"> | <img src="docs/images/radar-tab.jpg" alt="The Radar tab: Show gameplay radar, range and size choices, and the Keys section with F8, F3, F4 and F10 and a Reset button" width="300"> |
+| <img src="docs/images/puzzles-tab.jpg" alt="The Puzzles tab for Verdant Glen: 407 left in this zone, a search box, the puzzle types with solved counts and three of them ticked, and the switches below" width="300"> | <img src="docs/images/compass-tab.jpg" alt="The Compass tab: Show puzzle compass, range and size choices, and the Keys section with F8, F3, F4 and F10 and a Reset button" width="300"> |
 
 </div>
 
-### The radar
+### The compass
 
 | Default key | Action |
 | :---: | --- |
-| <kbd>F8</kbd> | Show or hide the radar |
+| <kbd>F8</kbd> | Show or hide the compass |
 | <kbd>F3</kbd> | Zoom in |
 | <kbd>F4</kbd> | Zoom out |
 | <kbd>F10</kbd> | Cycle the display size |
 
-**To change a key**, open the map's **Radar** tab, click the key next to the
+**To change a key**, open the map's **Compass** tab, click the key next to the
 action and press the new one. **Esc** cancels; mouse buttons and Shift, Ctrl,
-Alt or Cmd on their own aren't accepted. Choosing a key another radar action
-already uses swaps the two, and **Reset** restores the defaults. The radar
+Alt or Cmd on their own aren't accepted. Choosing a key another compass action
+already uses swaps the two, and **Reset** restores the defaults. The compass
 doesn't check the game's own bindings, so avoid keys you use to play.
 
-- The number under the radar is its **range**, not the distance to a puzzle.
+- The number under the compass is its **range**, not the distance to a puzzle.
 - **^** / **v** mark puzzles more than 10 metres above or below you.
 - Your custom map markers always appear: in range at their position, farther
   away as a cyan arrow on the rim with their distance.
-- The radar hides during menus and puzzle input, and comes back afterwards.
+- The compass hides during menus and puzzle input, and comes back afterwards.
 
 ### Saved settings
 
-Your ticked types, **Hide completed**, **Show random-spot puzzles**, the radar
+Your ticked types, **Hide completed**, **Show random-spot puzzles**, the compass
 switch, range, size and keys
 are saved as you change them and restored the next time you play. They live in
-`IOIPuzzleRadar.sav` in the game's `Saved\SaveGames` folder, apart from your
+`IOIPuzzleFinder.sav` in the game's `Saved\SaveGames` folder, apart from your
 progress save. Delete that file to start over with the defaults.
 
 ## Questions
@@ -211,8 +211,8 @@ progress save. Delete that file to start over with the defaults.
 <details>
 <summary>Does it change my save?</summary>
 
-No. Puzzle Radar only reads your progress so it can hide solved puzzles. Its
-own settings go in a separate `IOIPuzzleRadar.sav`. Removing the `.pak` puts
+No. Puzzle Finder only reads your progress so it can hide solved puzzles. Its
+own settings go in a separate `IOIPuzzleFinder.sav`. Removing the `.pak` puts
 the game back exactly as it was.
 
 </details>
@@ -243,9 +243,9 @@ Restored Mod v1.6 is installed.
 <details>
 <summary>The game won't start after installing</summary>
 
-Close the game and remove the Puzzle Radar `.pak` from `Paks`. Make sure only
-one Puzzle Radar package was installed and that the base mod is complete, then
-[open an issue](https://github.com/ardelato/ioi-puzzle-radar/issues/new?template=bug_report.md)
+Close the game and remove the Puzzle Finder `.pak` from `Paks`. Make sure only
+one Puzzle Finder package was installed and that the base mod is complete, then
+[open an issue](https://github.com/ardelato/ioi-puzzle-finder/issues/new?template=bug_report.md)
 saying whether removing the addon fixed it.
 
 </details>
@@ -255,12 +255,12 @@ saying whether removing the addon fixed it.
 - Built and tested against the **Offline Restored Mod v1.6**. Other base-mod
   versions are untested.
 - Other mods that replace the world map or the gameplay HUD can conflict.
-- At most 24 nearby points are drawn on the radar at once; very dense areas may
+- At most 24 nearby points are drawn on the compass at once; very dense areas may
   take a few updates to settle.
 
 ## Reporting a bug
 
-[Open an issue](https://github.com/ardelato/ioi-puzzle-radar/issues/new?template=bug_report.md)
+[Open an issue](https://github.com/ardelato/ioi-puzzle-finder/issues/new?template=bug_report.md)
 with the addon version, the ticked puzzle types, where you were and the steps
 to reproduce. A screenshot helps for anything visual. Please remove account
 IDs and personal paths from logs, and don't attach save files.
@@ -275,7 +275,7 @@ PowerShell pipeline does the editor's job:
    with UnrealPak, and decode them to JSON with UAssetGUI.
 2. **Catalog** every puzzle location by combining SaveStats' data with the
    game's puzzle database.
-3. **Generate** the map panel and radar as new Blueprint classes, writing their
+3. **Generate** the map panel and compass as new Blueprint classes, writing their
    logic directly as Kismet bytecode, plus map markers and icon textures.
 4. **Verify** by re-encoding everything, decoding it again and checking it
    matches what was generated, with the game's own functions left unchanged.
