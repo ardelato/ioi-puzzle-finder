@@ -60,14 +60,26 @@ more helpers are on the way.
 ### On the map
 
 <div align="center">
-  <img src="docs/images/map-puzzles-right.jpg" alt="The world map of Verdant Glen with Hidden Cube, Pentad and Ring pins, and the Puzzles tab listing the zone's types with solved counts" width="600">
+  <img src="docs/images/map-puzzles.jpg" alt="The world map of Verdant Glen with Hidden Cube, Pentad and Ring pins, and the Puzzles tab listing the zone's types with solved counts" width="800">
+</div>
+
+### Random-spot puzzles
+
+<div align="center">
+  <img src="docs/images/map-random-spot.jpg" alt="The world map of Verdant Glen with Logic Grid ticked and Show random-spot puzzles on: gold Logic Grid pins at their fixed spots, and dark circles marked ? scattered across the island" width="800">
+  <br>
+  <sub>Logic Grid ticked with <b>Show random-spot puzzles</b> on. Gold pins are Logic Grids that always sit in the same place; each <b>?</b> is one the game has put on a random spot right now.</sub>
 </div>
 
 ### On the radar
 
+<div align="center">
+
 | Ticked puzzle types | Your map markers |
 | :---: | :---: |
 | <img src="docs/images/radar-types.jpg" alt="The radar with Hidden Cube and Ring icons and ^ / v height marks" width="220"> | <img src="docs/images/radar-markers.jpg" alt="The radar with three cyan arrows on its rim labelled 1.0 km, 960 m and 762 m, plus puzzle pins inside the ring" width="220"> |
+
+</div>
 
 ### Crystal Labyrinths
 
@@ -93,9 +105,13 @@ other handmade labyrinths aren't yet.
 
 ### Hidden Pentad
 
+<div align="center">
+
 | Before you start | Started: five relics | Two found: three left |
 | :---: | :---: | :---: |
 | <img src="docs/images/pentad-1.jpg" alt="Radar before the Pentad starts" width="180"> | <img src="docs/images/pentad-2.jpg" alt="Radar after starting: five relics" width="180"> | <img src="docs/images/pentad-3.jpg" alt="Radar after two relics found: three left" width="180"> |
+
+</div>
 
 ## Install
 
@@ -153,9 +169,13 @@ The map legend in the lower right has three tabs: **Legend** (the game's own),
 **Radar** holds **Show gameplay radar**, the range (50 to 400 m) and size
 choices, and the radar keys.
 
+<div align="center">
+
 | The Puzzles tab | The Radar tab |
 | :---: | :---: |
-| <img src="docs/images/puzzles-tab.jpg" alt="The Puzzles tab for Verdant Glen: 409 left in this zone, a search box, the puzzle types with solved counts and three of them ticked, and the switches below" width="300"> | <img src="docs/images/radar-tab.jpg" alt="The Radar tab: Show gameplay radar, range and size choices, and the Keys section with F8, F3, F4 and F10 and a Reset button" width="300"> |
+| <img src="docs/images/puzzles-tab.jpg" alt="The Puzzles tab for Verdant Glen: 403 left in this zone, a search box, the puzzle types with solved counts and three of them ticked, and the switches below" width="300"> | <img src="docs/images/radar-tab.jpg" alt="The Radar tab: Show gameplay radar, range and size choices, and the Keys section with F8, F3, F4 and F10 and a Reset button" width="300"> |
+
+</div>
 
 ### The radar
 
