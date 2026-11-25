@@ -12,8 +12,8 @@ Project page, updates and bug reports: https://github.com/ardelato/ioi-puzzle-ra
 1. Close the game. In Steam, choose **Islands of Insight → Manage → Browse local
    files**.
 2. Move any previous Puzzle Radar package out of the game's `Paks` folder.
-   Beta 1 was named `ZZ_SaveStatsMap_P.pak`. Keep just one Puzzle Radar package
-   installed.
+   Earlier test builds were named `ZZ_SaveStatsMap_P.pak`. Keep just one Puzzle
+   Radar package installed.
 3. Copy only `ZZ_IOIPuzzleRadar_P.pak` from this archive into the game's
    `IslandsofInsight/Content/Paks` folder:
 

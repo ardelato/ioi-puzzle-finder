@@ -1,6 +1,6 @@
-# Beta testing
+# Testing a release
 
-Test the exact package hash recorded in the beta's release manifest. Use the
+Test the exact package hash recorded in the release manifest (`release.json`). Use the
 full Offline Restored Mod v1.6, and note any additional map or HUD mods. Keep an
 ordinary save backup before testing; no debug save or console command is needed.
 
@@ -60,7 +60,7 @@ The data covers 293 Pentads and 1,465 relics; focused native collection tests us
 five cooked Pentads and 25 relics. Those checks establish regression evidence,
 not rendered FPS, every monitor layout or compatibility with every other mod.
 The extracted repository's build and package checks are recorded separately for
-the actual beta artifact.
+the actual release artifact.
 
 ## Report a problem
 
@@ -74,7 +74,7 @@ personal paths and tokens before sharing. Do not attach a save, full crash
 directory or private build inputs to a public issue by default.
 
 If the game cannot start, close it and remove only
-your Puzzle Radar package from `IslandsofInsight/Content/Paks/`. The beta 1
+your Puzzle Radar package from `IslandsofInsight/Content/Paks/`. The private beta 1
 package was named `ZZ_SaveStatsMap_P.pak`. Later builds use
 `ZZ_IOIPuzzleRadar_P.pak`. Retest with the full base mod installed, and report
 whether that resolves the crash.

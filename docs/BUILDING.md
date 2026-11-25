@@ -47,7 +47,7 @@ build does not read a player save or need a SaveStats progress report.
 
 Use trusted local tools obtained from their respective projects. Tool binaries,
 game archives, extracted assets, encryption material and SaveStats installations
-are not part of the addon source or beta zip. See
+are not part of the addon source or release zip. See
 [third-party notices](../THIRD_PARTY_NOTICES.md).
 
 ## Build
@@ -66,7 +66,7 @@ From the addon repository root:
 
 The default universal mode includes the complete eligible catalog and uses live
 game progress at runtime. `-Limit` produces a developer smoke build and must stay
-zero for a beta package. Snapshot mode is for local investigations only; its
+zero for a release package. Snapshot mode is for local investigations only; its
 player-specific output is not suitable for distribution.
 
 Handmade Crystal Labyrinth floors are baked from the game itself: on the first
@@ -111,21 +111,21 @@ Keep those game-data fixtures outside tracked source. Engine checks run in
 isolated profiles against copied saves; never point test fixtures at a live save
 or use an installed archive as a generated output path.
 
-## Prepare a beta
+## Package a release
 
-The packager reads the beta version from `VERSION`:
+The packager reads the version from `VERSION`:
 
 ```powershell
-.\scripts\package-beta.ps1 -BuildDirectory '.\output\build-EXAMPLE'
+.\scripts\package-release.ps1 -BuildDirectory '.\output\build-EXAMPLE'
 ```
 
 The packager writes to `dist` and includes only the verified universal `.pak`,
-user installation instructions, beta testing notes, changelog, license and
+user installation instructions, changelog, license and
 notices, sanitized `release.json` and `SHA256SUMS.txt`. The manifest records the
 addon version, package hash and
 tested base-mod identity without local paths or save provenance.
 
-Follow [BETA-TESTING](BETA-TESTING.md), review the exact package, then create the
+Follow [TESTING](TESTING.md), review the exact package, then create the
 GitHub release as a separate publishing step with `scripts/publish-release.ps1`;
 see [RELEASING](RELEASING.md). It only creates a draft, so unreviewed local
 files are never published by a script alone.
@@ -133,9 +133,9 @@ files are never published by a script alone.
 ## Package filename
 
 `ZZ_SaveStatsMap_P.pak` was the prototype name. It described the original
-feature of showing SaveStats puzzle locations on the world map. Beta 1 shipped
-with that filename. `ZZ_IOIPuzzleRadar_P.pak` names the addon and its gameplay
-radar directly.
+feature of showing SaveStats puzzle locations on the world map. The private
+beta 1 shipped with that filename. `ZZ_IOIPuzzleRadar_P.pak` names the addon and
+its gameplay radar directly.
 
 The `ZZ_` prefix keeps the filename sorted after `RRMOD_PuzzleFix.pak`, as with
 the original overlay. The `_P` suffix follows

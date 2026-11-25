@@ -26,7 +26,7 @@ try {
         specialCompletionCoverage=@{lorePuzzles=98;monolithFragments=59;total=157}
     }
     $manifestPath = Join-Path $build 'build.json'
-    $packager = Join-Path $PSScriptRoot 'package-beta.ps1'
+    $packager = Join-Path $PSScriptRoot 'package-release.ps1'
     $caseNumber = 0
     foreach ($change in @(
         @{key='catalogMode';value='snapshot'}, @{key='markerLimit';value=1},
@@ -52,7 +52,7 @@ try {
     & $packager -BuildDirectory $build -OutputDir $output | Out-Null
     $zip = Join-Path $output "ioi-puzzle-radar-$version.zip"
     Assert-ReleaseTest (Test-Path -LiteralPath $zip -PathType Leaf) 'No release archive was written.'
-    $expected = @('ZZ_IOIPuzzleRadar_P.pak','README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','CHANGELOG.md','BETA-TESTING.md','release.json','SHA256SUMS.txt')
+    $expected = @('ZZ_IOIPuzzleRadar_P.pak','README.md','LICENSE','NOTICE','THIRD_PARTY_NOTICES.md','CHANGELOG.md','release.json','SHA256SUMS.txt')
     $archive = [IO.Compression.ZipFile]::OpenRead($zip)
     try {
         Assert-ReleaseTest (@(Compare-Object ($expected | Sort-Object) (@($archive.Entries.FullName) | Sort-Object)).Count -eq 0) 'Public archive contains unexpected or missing files.'
