@@ -84,9 +84,9 @@ more helpers are on the way.
 ### Crystal Labyrinths
 
 <div align="center">
-  <img src="docs/images/labyrinth-left.jpg" alt="Standing on the second floor of a Crystal Labyrinth among glass walls. In the lower-left corner the compass draws this floor's walls, with two reddish cells for trap doors, and reads Floor 2 of 3" width="600">
+  <img src="docs/images/labyrinth-left.jpg" alt="Standing on the second floor of a Crystal Labyrinth among glass walls. In the lower-left corner the compass draws this floor's walls, with two reddish cells for trap doors, and reads Crystal Labyrinth, Floor 2 of 2" width="600">
   <br>
-  <sub>Floor 2 of 3. The reddish cells on the compass are trap doors: holes in the floor you'd fall through.</sub>
+  <sub>Floor 2 of 2. The reddish cells on the compass are trap doors: holes in the floor you'd fall through.</sub>
 </div>
 
 Inside a Crystal Labyrinth the compass switches to a floor plan of the level you
@@ -173,7 +173,7 @@ choices, and the compass keys.
 
 | The Puzzles tab | The Compass tab |
 | :---: | :---: |
-| <img src="docs/images/puzzles-tab.jpg" alt="The Puzzles tab for Verdant Glen: 403 left in this zone, a search box, the puzzle types with solved counts and three of them ticked, and the switches below" width="300"> | <img src="docs/images/compass-tab.jpg" alt="The Compass tab: Show puzzle compass, range and size choices, and the Keys section with F8, F3, F4 and F10 and a Reset button" width="300"> |
+| <img src="docs/images/puzzles-tab.jpg" alt="The Puzzles tab for Verdant Glen: 407 left in this zone, a search box, the puzzle types with solved counts and three of them ticked, and the switches below" width="300"> | <img src="docs/images/compass-tab.jpg" alt="The Compass tab: Show puzzle compass, range and size choices, and the Keys section with F8, F3, F4 and F10 and a Reset button" width="300"> |
 
 </div>
 
