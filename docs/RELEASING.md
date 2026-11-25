@@ -7,7 +7,8 @@ Publishing is a separate, reviewed step: the scripts below only ever create a
 
 ## 1. Prepare the version
 
-1. Set the new version in `VERSION` (for example `0.1.0-beta.3`).
+1. Set the new version in `VERSION` (for example `0.1.1`, or `0.2.0-beta.1`
+   for a test build).
 2. Give it a section in `CHANGELOG.md` headed `## <version> (YYYY-MM-DD)`. The
    publish script uses that section as the release notes and refuses a heading
    that still says *unreleased*.
@@ -23,11 +24,11 @@ build, then package the verified build:
 
 ```powershell
 .\build.ps1 -SaveStatsDir ... -GameDir ... -AssetInputDir .\local-inputs ...
-.\scripts\package-beta.ps1 -BuildDirectory .\output\build-<timestamp>
+.\scripts\package-release.ps1 -BuildDirectory .\output\build-<timestamp>
 ```
 
 This writes `dist/ioi-puzzle-radar-<version>.zip` and its `.zip.sha256`. Install
-the `.pak` from that ZIP and run through [BETA-TESTING.md](BETA-TESTING.md).
+the `.pak` from that ZIP and run through [TESTING.md](TESTING.md).
 
 ## 3. Create the draft release
 
@@ -47,7 +48,7 @@ signed in with `gh auth login`):
 The script checks that the working tree is clean, the commit is on `origin`,
 the tag `v<version>` does not exist yet and the ZIP still matches its checksum.
 It then creates a draft release targeting the current commit, attaches the ZIP
-and `.zip.sha256`, and marks versions with a `-` suffix (such as `-beta.3`) as
+and `.zip.sha256`, and marks versions with a `-` suffix (such as `-beta.1`) as
 pre-releases.
 
 ## 4. Publish

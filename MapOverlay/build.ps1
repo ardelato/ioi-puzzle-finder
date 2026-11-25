@@ -517,7 +517,7 @@ $manifest = [ordered]@{
     baselineJson = $baselineJson
     injectedJson = $injectedJson
     roundtripJson = $roundtripJson
-    status = 'Built; native package checks passed. Rendered gameplay beta checks remain manual.'
+    status = 'Built; native package checks passed. Rendered gameplay checks remain manual.'
 }
 foreach ($protectedInput in $protectedInputs) {
     if ((Get-FileHash -LiteralPath $protectedInput.path -Algorithm SHA256).Hash -cne $protectedInput.sha256) {

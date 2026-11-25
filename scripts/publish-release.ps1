@@ -4,7 +4,7 @@
 Uploads a packaged release from dist/ to GitHub as a draft release.
 
 .DESCRIPTION
-Run after scripts/package-beta.ps1. The script checks the archive against its
+Run after scripts/package-release.ps1. The script checks the archive against its
 .sha256 file, builds release notes from the CHANGELOG section for VERSION and
 creates a draft GitHub release tagged v<VERSION> at the current commit. Nothing
 is public until a maintainer reviews the draft and publishes it.
@@ -28,7 +28,7 @@ $name = "ioi-puzzle-radar-$version"
 $zip = Join-Path ([IO.Path]::GetFullPath($DistDir)) "$name.zip"
 $zipChecksum = "$zip.sha256"
 foreach ($file in @($zip, $zipChecksum)) {
-    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing $file. Run scripts/package-beta.ps1 first." }
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing $file. Run scripts/package-release.ps1 first." }
 }
 $zipSha = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ((Get-Content -Raw -LiteralPath $zipChecksum).Trim() -cne "$zipSha  $name.zip") { throw 'The archive does not match its .sha256 file.' }

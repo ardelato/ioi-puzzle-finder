@@ -7,12 +7,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $version = (Get-Content -Raw -LiteralPath (Join-Path $repo 'VERSION')).Trim()
-if ($version -cnotmatch '^\d+\.\d+\.\d+-beta\.\d+$') { throw 'Expected a beta SemVer in VERSION.' }
+if ($version -cnotmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$') { throw 'Expected a SemVer in VERSION.' }
 $BuildDirectory = (Resolve-Path -LiteralPath $BuildDirectory).Path
 $build = Get-Content -Raw -LiteralPath (Join-Path $BuildDirectory 'build.json') | ConvertFrom-Json -Depth 40
 $compatibility = Get-Content -Raw -LiteralPath (Join-Path $repo 'compatibility.json') | ConvertFrom-Json
-if ($build.version -cne $version -or $build.catalogMode -cne 'universal' -or $build.markerLimit -ne 0 -or $build.packagedAssetCount -ne 68) {
-    throw 'A full, version-matched universal build with all 68 assets is required.'
+if ($build.version -cne $version -or $build.catalogMode -cne 'universal' -or $build.markerLimit -ne 0 -or $build.packagedAssetCount -ne 84) {
+    throw 'A full, version-matched universal build with all 84 assets is required.'
 }
 if ($build.installedBasePakSha256 -ine $compatibility.offlineRestoredPakSha256) { throw 'Build uses an unsupported base mod.' }
 $pakName = 'ZZ_IOIPuzzleRadar_P.pak'
@@ -32,7 +32,6 @@ $documents = [ordered]@{
     'NOTICE' = 'NOTICE'
     'THIRD_PARTY_NOTICES.md' = 'THIRD_PARTY_NOTICES.md'
     'CHANGELOG.md' = 'CHANGELOG.md'
-    'BETA-TESTING.md' = 'docs/BETA-TESTING.md'
 }
 foreach ($source in $documents.Values) {
     if (-not (Test-Path -LiteralPath (Join-Path $repo $source) -PathType Leaf)) { throw "Missing release document: $source" }
@@ -45,7 +44,7 @@ foreach ($document in $documents.GetEnumerator()) {
 $release = [ordered]@{
     name = 'ioi-puzzle-radar'
     version = $version
-    channel = 'beta'
+    channel = if ($version.Contains('-')) { 'prerelease' } else { 'stable' }
     package = $pakName
     packageSha256 = $pakSha
     catalogMode = 'universal'
@@ -62,7 +61,7 @@ $release = [ordered]@{
     checks = [ordered]@{
         nativePackageRoundtrip = 'passed by build'
         completeCatalogCoverage = 'passed by build'
-        manualGameplay = 'See BETA-TESTING.md; not implied by packaging.'
+        manualGameplay = 'See docs/TESTING.md in the source repository; not implied by packaging.'
     }
 }
 $release | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $folder 'release.json') -Encoding utf8NoBOM
@@ -93,6 +92,6 @@ try {
 } finally { $archive.Dispose() }
 $zipSha = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$zipPath.sha256", "$zipSha  $name.zip`n", [Text.UTF8Encoding]::new($false))
-Write-Output "Prepared local beta: $zipPath"
+Write-Output "Prepared local release: $zipPath"
 Write-Output "SHA256: $zipSha"
 Write-Output 'Nothing was uploaded or published.'

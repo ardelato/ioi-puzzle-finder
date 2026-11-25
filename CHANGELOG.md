@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.1.0-beta.2 (unreleased)
+## 0.1.0 (2026-11-24)
+
+First public release. Changes since the private beta 1:
 
 - Rename the addon package to `ZZ_IOIPuzzleRadar_P.pak`. Move the beta 1 package
   out of the game's `Paks` folder before installing the renamed package.
