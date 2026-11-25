@@ -63,6 +63,14 @@ more helpers are on the way.
   <img src="docs/images/map-puzzles.jpg" alt="The world map of Verdant Glen with Hidden Cube, Pentad and Ring pins, and the Puzzles tab listing the zone's types with solved counts" width="800">
 </div>
 
+### Random-spot puzzles
+
+<div align="center">
+  <img src="docs/images/map-random-spot.jpg" alt="The world map of Verdant Glen with Logic Grid ticked and Show random-spot puzzles on: gold Logic Grid pins at their fixed spots, and dark circles marked ? scattered across the island" width="800">
+  <br>
+  <sub>Logic Grid ticked with <b>Show random-spot puzzles</b> on. Gold pins are Logic Grids that always sit in the same place; each <b>?</b> is one the game has put on a random spot right now.</sub>
+</div>
+
 ### On the radar
 
 | Ticked puzzle types | Your map markers |
