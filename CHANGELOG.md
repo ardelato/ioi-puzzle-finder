@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Keep your own key bindings from Settings > Controls. Registering the
+  compass keys reset every game action to its default key (sprint, crouch
+  and the rest), so rebinds looked saved but didn't work in play.
+
 ## 0.2.0 (2026-11-25)
 
 - Rename the addon to Puzzle Finder, since Offline Restored Mod has its own
