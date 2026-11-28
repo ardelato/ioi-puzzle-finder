@@ -273,7 +273,9 @@ $snapshot = Get-Content -Raw -LiteralPath $markersPath | ConvertFrom-Json -Depth
 $renderManifest = Get-Content -Raw -LiteralPath $renderManifestPath | ConvertFrom-Json -Depth 30
 $selectedMarkers = @($renderManifest.renderPoints)
 $baseExportCount = $baselineAsset.Exports.Count
-if ($roundtripAsset.Exports.Count -ne $baseExportCount + 3 * $selectedMarkers.Count) {
+# The one host actor (and its root) inject_markers.php adds to the level.
+$pinHost = [int]$renderManifest.pinHost
+if ($roundtripAsset.Exports.Count -ne $baseExportCount + 2 * $pinHost) {
     throw 'Roundtrip changed the expected export count.'
 }
 for ($i = 0; $i -lt $baseExportCount; $i++) {
@@ -286,52 +288,15 @@ for ($i = 0; $i -lt $baseExportCount; $i++) {
 $baselineLevel = @($baselineAsset.Exports | Where-Object { $_.ObjectName -eq 'PersistentLevel' -and $_.'$type' -like '*LevelExport,*' })
 $roundtripLevel = @($roundtripAsset.Exports | Where-Object { $_.ObjectName -eq 'PersistentLevel' -and $_.'$type' -like '*LevelExport,*' })
 if ($baselineLevel.Count -ne 1 -or $roundtripLevel.Count -ne 1) { throw 'Expected one persistent level.' }
-if ($roundtripLevel[0].Actors.Count -ne $baselineLevel[0].Actors.Count + $selectedMarkers.Count) { throw 'Level actor count changed unexpectedly.' }
+if ($roundtripLevel[0].Actors.Count -ne $baselineLevel[0].Actors.Count + $pinHost) { throw 'Level actor count changed unexpectedly.' }
 for ($i = 0; $i -lt $baselineLevel[0].Actors.Count; $i++) {
     if ($baselineLevel[0].Actors[$i] -ne $roundtripLevel[0].Actors[$i]) { throw 'An existing level actor reference changed.' }
 }
-for ($i = 0; $i -lt $selectedMarkers.Count; $i++) {
-    $sourceMarker = $selectedMarkers[$i]
-    $offset = $baseExportCount + 3 * $i
-    $actor = $roundtripAsset.Exports[$offset]
-    $root = $roundtripAsset.Exports[$offset + 1]
-    $emitter = $roundtripAsset.Exports[$offset + 2]
-    if ($actor.ObjectName -cne $sourceMarker.actorName -or $root.OuterIndex -ne $offset + 1 -or $emitter.OuterIndex -ne $offset + 1) {
-        throw 'Marker identity or component ownership did not survive conversion.'
-    }
-    if ($roundtripAsset.Imports[-1 - $actor.ClassIndex].ObjectName -cne 'Actor' -or $roundtripAsset.Imports[-1 - $emitter.ClassIndex].ObjectName -cne 'MarkerEmitter') {
-        throw 'Marker native classes did not survive conversion.'
-    }
-    $rootReference = @($actor.Data | Where-Object Name -eq 'RootComponent')
-    $components = @($actor.Data | Where-Object Name -eq 'InstanceComponents')
-    if ($rootReference.Count -ne 1 -or $rootReference[0].Value -ne $offset + 2 -or $components.Count -ne 1 -or $components[0].Value.Count -ne 2) {
-        throw 'Marker root or component registration references changed.'
-    }
-    if ($roundtripLevel[0].Actors[$baselineLevel[0].Actors.Count + $i] -ne $offset + 1) { throw 'Marker is missing from level actors.' }
-    $position = @($root.Data | Where-Object Name -eq 'RelativeLocation')[0].Value[0].Value
-    foreach ($axis in @('x', 'y', 'z')) {
-        # UE4 vectors use float32; allow sub-centimetre serialization rounding.
-        if (-not [double]::IsFinite([double]$position.$axis) -or [Math]::Abs([double]$position.$axis - [double]$sourceMarker.$axis) -gt 0.1) {
-            throw "Marker coordinate $axis changed for puzzle $($sourceMarker.pid)."
-        }
-    }
-    $markerFields = @($emitter.Data | Where-Object Name -eq 'Marker')[0].Value
-    $onMap = @($markerFields | Where-Object Name -eq 'VisibleOnMap')
-    $onScreen = @($markerFields | Where-Object Name -eq 'VisibleOnScreen')
-    if ($onMap.Count -ne 1 -or [bool]$onMap[0].Value -ne [bool]$sourceMarker.visibleByDefault -or $onScreen.Count -ne 1 -or $onScreen[0].Value) {
-        throw 'Map-only marker flags did not survive conversion.'
-    }
-    $hoverName = @($markerFields | Where-Object Name -eq 'MarkerName')
-    $hoverEnabled = @($markerFields | Where-Object Name -eq 'ShowInfoPanel')
-    if ($hoverName.Count -ne 1 -or $hoverName[0].CultureInvariantString -cne $sourceMarker.label -or $hoverEnabled.Count -ne 1 -or -not $hoverEnabled[0].Value) {
-        throw 'Marker hover text did not survive conversion.'
-    }
-    $iconReference = @($markerFields | Where-Object Name -eq 'mapTex')[0].Value
-    if ($iconReference -ge 0 -or $roundtripAsset.Imports[-1 - $iconReference].ObjectName -cne $sourceMarker.iconAsset) {
-        throw 'Marker type icon reference changed.'
-    }
-    $actorTags = @(@($actor.Data | Where-Object Name -eq 'Tags')[0].Value | ForEach-Object { $_.Value })
-    foreach ($tag in $sourceMarker.tags) { if ($actorTags -cnotcontains $tag) { throw "Marker lost filter tag: $tag" } }
+# Pins are data in the map widget; the level gains only the host the map creates emitters on.
+if ($pinHost -eq 1) {
+    $added = @($roundtripAsset.Exports[$baseExportCount..($baseExportCount + 1)])
+    if ($added[0].ObjectName -cne 'SaveStatsPinHost' -or $added[1].OuterIndex -ne $baseExportCount + 1) { throw 'The pin host did not survive conversion.' }
+    if (@($added | Where-Object { $roundtripAsset.Imports[-1 - $_.ClassIndex].ObjectName -ceq 'MarkerEmitter' }).Count -ne 0) { throw 'The level must hold no map emitters.' }
 }
 
 $payloadPath = Join-Path $stagedDir 'RRMod_Objects.uexp'
@@ -351,7 +316,7 @@ if (-not (Test-Path -LiteralPath $baselineWidget)) { throw 'The installed mod di
 Invoke-CheckedTool $assetGui @('tojson', $baselineWidget, $baselineWidgetJson, 'VER_UE4_27')
 Invoke-CheckedTool $php @(
     (Join-Path $PSScriptRoot 'filter_widget.php'), '--base-widget', $baselineWidgetJson,
-    '--markers', $markersPath, '--output', $filteredWidgetJson, '--manifest', $filterManifestPath
+    '--markers', $markersPath, '--output', $filteredWidgetJson, '--manifest', $filterManifestPath, '--render-manifest', $renderManifestPath
 )
 $stagedWidget = Join-Path $stagedWidgetDir 'WBP_LargeMap.uasset'
 $widgetRoundtripJson = Join-Path $runDir 'widget-roundtrip.json'
