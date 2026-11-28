@@ -5,6 +5,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/tests/paths.php';
 
 require_once __DIR__ . '/inject_markers.php';
+require_once __DIR__ . '/pin_pool.php';
 
 function CheckOverlay(bool $condition, string $message): void
 {
@@ -51,7 +52,8 @@ $document = (object)['schemaVersion' => 2, 'markers' => (object)[
 ], 'spawnSites' => new stdClass()];
 $result = InjectOverlayMarkers($base, $document);
 CheckOverlay(json_encode($base) === $original, 'Injection mutated the base input.');
-CheckOverlay(count($result->Exports) === count($base->Exports) + 6, 'Expected actor, root and emitter per marker.');
+// Pins are data in the map widget; the level gains only the host the map creates emitters on.
+CheckOverlay(count($result->Exports) === count($base->Exports) + 2, 'Expected one host actor and its root, and nothing per pin.');
 foreach ($base->Exports as $i => $export) {
     if (($export->{'$type'} ?? '') !== 'UAssetAPI.ExportTypes.LevelExport, UAssetAPI') {
         CheckOverlay(json_encode($result->Exports[$i]) === json_encode($export), 'Existing world content changed.');
@@ -61,38 +63,28 @@ $start = count($base->Exports);
 $originalLevel = array_values(array_filter($base->Exports, fn(object $e): bool => ($e->{'$type'} ?? '') === 'UAssetAPI.ExportTypes.LevelExport, UAssetAPI'))[0];
 $newLevel = array_values(array_filter($result->Exports, fn(object $e): bool => ($e->{'$type'} ?? '') === 'UAssetAPI.ExportTypes.LevelExport, UAssetAPI'))[0];
 CheckOverlay(array_slice($newLevel->Actors, 0, count($originalLevel->Actors)) === $originalLevel->Actors, 'Original level actor references changed.');
-CheckOverlay(array_slice($newLevel->Actors, -2) === [$start + 1, $start + 4], 'New marker actors were not registered with the level.');
-$actor = $result->Exports[$start];
-$root = $result->Exports[$start + 1];
-$emitter = $result->Exports[$start + 2];
+CheckOverlay(array_slice($newLevel->Actors, count($originalLevel->Actors)) === [$start + 1], 'The pin host must be a level actor.');
 foreach (array_slice($result->Exports, $start) as $newExport) {
     $tail = $newExport->Extras;
     $tail = is_string($tail) ? $tail : ($tail->{'$value'} ?? null);
     CheckOverlay($tail === '', 'New native marker exports inherited an unrelated class serialization tail.');
     CheckOverlay(($newExport->ObjectGuid ?? null) === null && !($newExport->HasLeadingFourNullBytes ?? false), 'New marker export inherited object-specific serialization metadata.');
 }
-CheckOverlay($actor->ObjectName === 'SaveStatsMarker_100_0', 'Output marker order is not deterministic.');
-CheckOverlay($actor->Data[0]->Value === $start + 2, 'Root reference is incorrect.');
-CheckOverlay(count($actor->Data[1]->Value) === 2, 'Actor does not own both components.');
-CheckOverlay($root->OuterIndex === $start + 1 && $emitter->OuterIndex === $start + 1, 'Component owner is incorrect.');
-$location = $root->Data[0]->Value[0]->Value;
-CheckOverlay($location->X === -12.5 && $location->Y === 0.0 && $location->Z === 50.5, 'World coordinates changed.');
-$fields = array_column($emitter->Data[0]->Value, 'Value', 'Name');
-CheckOverlay($fields['worldTex'] === 0 && $fields['mapTex'] < 0, 'Map-only texture settings are incorrect.');
-CheckOverlay($fields['VisibleOnScreen'] === 0, 'On-screen HUD markers must be disabled.');
-CheckOverlay($fields['VisibleOnMap'] === 0 && $fields['ShowInfoPanel'] === 1 && $fields['DrawNameOnMap'] === 0, 'Markers must start hidden while retaining hover-only presentation settings.');
-CheckOverlay($fields['SupportsFastTravel'] === 0, 'Snapshot marker must not support fast travel.');
-$textFields = array_column($emitter->Data[0]->Value, null, 'Name');
-CheckOverlay($textFields['MarkerName']->{'$type'} === 'UAssetAPI.PropertyTypes.Objects.TextPropertyData, UAssetAPI', 'Hover name must serialize as FText.');
-CheckOverlay(str_contains($textFields['MarkerName']->CultureInvariantString, '#100 - Static - Point 1'), 'Hover name lacks puzzle, source, or point label.');
-CheckOverlay($textFields['FunctionText']->CultureInvariantString === '', 'Snapshot marker should not advertise a click action.');
-$actorFields = array_column($actor->Data, null, 'Name');
-CheckOverlay(array_column($actorFields['Tags']->Value, 'Value') === ['SaveStatsOverlay', 'SaveStats.Source.static', 'SaveStats.Puzzle.100', 'SaveStats.Type.hiddenRing'], 'Actor filter and live-completion identity tags are incorrect.');
-$textureImport = $result->Imports[-$fields['mapTex'] - 1];
-CheckOverlay($textureImport->ClassName === 'Texture2D' && $textureImport->ObjectName === GetOverlayTypes()['hiddenRing']['iconAsset'], 'Marker uses the wrong type icon.');
-CheckOverlay(!str_contains(json_encode(array_slice($result->Exports, $start)), 'KrakenId'), 'Markers must not impersonate puzzles.');
+CheckOverlay(!str_contains(json_encode(array_slice($result->Exports, $start)), 'SaveStatsMarker_') && !str_contains(json_encode(array_slice($result->Exports, $start)), 'KrakenId'), 'The level must not hold pin actors or impersonate puzzles.');
+$host = $result->Exports[$start];
+CheckOverlay($host->ObjectName === OVERLAY_PIN_HOST && array_column(array_column($host->Data, null, 'Name')['Tags']->Value, 'Value') === [OVERLAY_PIN_HOST], 'The pin host must be tagged for the map to find it.');
+CheckOverlay($result->Exports[$start + 1]->Data[0]->Value[0]->Value->X === 0.0 && !str_contains(json_encode(array_slice($result->Exports, $start)), 'LocationMarkerData'),
+    'The host sits at the origin and the level holds no map emitters.');
+// The map's pin data: one entry per pin, grouped by type and zone.
+$points = ExpandOverlayMarkers($document);
+CheckOverlay($points[0]->label === 'Hidden Ring #100 - Static - Point 1' && $points[0]->actorName === 'SaveStatsMarker_100_0', 'Pin labels and order must be deterministic.');
+$pinData = OverlayPinData(array_map(static fn(object $p): array => (array)$p, $points), ['hiddenRing', 'hiddenCube']);
+CheckOverlay($pinData['x'] === [-12.5, 500.0] && $pinData['puzzle'] === [100, 200] && $pinData['source'] === [0, 1] && $pinData['label'][0] === 'Hidden Ring #100 - Static - Point 1'
+    && $pinData['icon'][0] === OverlayPinIconNumber(GetOverlayTypes()['hiddenRing']['iconAsset']), 'Pin data must carry each pin\'s position, puzzle, kind, icon and label.');
+CheckOverlay($pinData['members'] === [0, 1] && count($pinData['groupStart']) === 2 * OVERLAY_PIN_ZONES + 1 && $pinData['groupStart'][1] === 1 && $pinData['groupStart'][OVERLAY_PIN_ZONES] === 1
+    && $pinData['groupStart'][OVERLAY_PIN_ZONES + 1] === 2, 'Zoneless pins must sit in their type\'s zone-0 group.');
 $one = InjectOverlayMarkers($base, $document, 1);
-CheckOverlay(count($one->Exports) === $start + 3, '--limit does not restrict injection.');
+CheckOverlay(count($one->Exports) === $start + 2, '--limit must not change the host.');
 $empty = InjectOverlayMarkers($base, (object)['schemaVersion' => 2, 'markers' => new stdClass(), 'spawnSites' => new stdClass()]);
 CheckOverlay(json_encode($empty) === $original, 'Empty snapshot should preserve the map exactly.');
 ExpectOverlayFailure(fn() => InjectOverlayMarkers($result, $document), 'Duplicate injection was accepted.');
@@ -160,16 +152,12 @@ CheckOverlay(count(ExpandOverlayMarkers($multi, 1)) === 2, 'Smoke limit must bou
 $ordinary = unserialize(serialize($document));
 $ordinary->markers->{'100'}->locations[0]->label = '';
 CheckOverlay(str_ends_with(ExpandOverlayMarkers($ordinary)[0]->label, '- Location'), 'Single-point hover should supply a useful location label.');
-$multiResult = InjectOverlayMarkers($base, $multi);
-foreach (array_slice($multiResult->Exports, count($base->Exports)) as $newExport) {
-    if (!str_starts_with($newExport->ObjectName, 'SaveStatsMarker_300_') && !str_starts_with($newExport->ObjectName, 'SaveStatsMarker_400_')) { continue; }
-    $expectedPid = str_starts_with($newExport->ObjectName, 'SaveStatsMarker_300_') ? 300 : 400;
-    $nativeFields = array_column($newExport->Data, null, 'Name');
-    CheckOverlay(in_array('SaveStats.Puzzle.' . $expectedPid, array_column($nativeFields['Tags']->Value, 'Value'), true), 'Injected paired/multipart actor lost the shared PID tag.');
-}
-$spawnEmitter = $multiResult->Exports[count($multiResult->Exports) - 1];
-$spawnFields = array_column($spawnEmitter->Data[0]->Value, 'Value', 'Name');
-CheckOverlay($spawnFields['VisibleOnMap'] === 0, 'Possible spawn sites must start disabled.');
+$multiPins = OverlayPinData(array_map(static fn(object $p): array => (array)$p, ExpandOverlayMarkers($multi)), ['logicGrid', 'match3', 'matchbox', 'seek5', 'racingBallCourse', 'hiddenRing', 'hiddenCube']);
+$siteIndex = count($multiPins['x']) - 1;
+CheckOverlay($multiPins['site'][$siteIndex] > 0 && $multiPins['source'][$siteIndex] === 2 && count(array_keys($multiPins['members'], $siteIndex, true)) === 2,
+    'A random-spot site must join the group of every type it allows.');
+CheckOverlay(count(array_filter($multiPins['relic'], static fn(int $r): bool => $r > 0)) === 5 && max($multiPins['relic']) === 5, 'Pentad relics must keep their relic numbers.');
+$multiResult = InjectOverlayMarkers($base, $multi, null, 3);
 if (in_array('--native-roundtrip', $argv, true)) {
     $roundtripDir = sys_get_temp_dir() . '/overlay-pids-' . bin2hex(random_bytes(6));
     CheckOverlay(mkdir($roundtripDir), 'Could not create native identity-check directory.');

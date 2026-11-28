@@ -5,6 +5,15 @@ declare(strict_types=1);
 require_once __DIR__ . '/types.php';
 require_once __DIR__ . '/completion_metadata.php';
 
+/** Registered emitters the map moves onto shown pins; every other emitter stays unregistered. */
+const OVERLAY_PIN_HOST = 'SaveStatsPinHost';
+/** A type icon's number: SSIcon012 is 12, its position in GetOverlayTypes(). */
+function OverlayPinIconNumber(string $iconAsset): int
+{
+    if (!preg_match('/^SSIcon(\d{3})$/', $iconAsset, $m)) { throw new RuntimeException("Unexpected pin icon asset {$iconAsset}."); }
+    return (int)$m[1];
+}
+
 function OverlayProperty(string $type, string $name, mixed $value): object
 {
     return (object)['$type' => "UAssetAPI.PropertyTypes.Objects.{$type}PropertyData, UAssetAPI", 'Name' => $name, 'Value' => $value];
@@ -129,6 +138,7 @@ function ExpandOverlayMarkers(object $document, ?int $limit = null): array
             }
             foreach ($locations as $point) {
                 $pointLabel = $point->label !== '' ? $point->label : ($site ? 'Container' : 'Location');
+                // Plain ASCII hyphens: the asset serializer rewrites '|' and mangles non-ASCII text.
                 $label = $record->label . ' - ' . ($site ? 'Shown only while a random-spot puzzle is here' : ucfirst($record->group)) . ' - ' . $pointLabel;
                 $renderPoint = (object)[
                     'actorName' => $prefix . '_' . $point->index,
@@ -247,7 +257,7 @@ function InjectOverlayMarkers(object $base, object $document, ?int $limit = null
     $level = null;
     $template = null;
     foreach ($asset->Exports as $i => $export) {
-        if (str_starts_with($export->ObjectName ?? '', 'SaveStatsMarker_') || str_starts_with($export->ObjectName ?? '', 'SaveStatsSite_')) {
+        if (str_starts_with($export->ObjectName ?? '', 'SaveStatsMarker_') || str_starts_with($export->ObjectName ?? '', 'SaveStatsSite_') || ($export->ObjectName ?? '') === OVERLAY_PIN_HOST) {
             throw new RuntimeException('Base map already contains SaveStats markers; use the original base map.');
         }
         if (($export->{'$type'} ?? '') === 'UAssetAPI.ExportTypes.LevelExport, UAssetAPI' && $export->ObjectName === 'PersistentLevel') {
@@ -266,73 +276,32 @@ function InjectOverlayMarkers(object $base, object $document, ?int $limit = null
     }
 
     $engine = OverlayImport($asset, '/Script/Engine', 0, '/Script/CoreUObject', 'Package');
-    $game = OverlayImport($asset, '/Script/IslandsofInsight', 0, '/Script/CoreUObject', 'Package');
     $actorClass = OverlayImport($asset, 'Actor', $engine, '/Script/CoreUObject', 'Class');
     $actorDefault = OverlayImport($asset, 'Default__Actor', $engine, '/Script/Engine', 'Actor');
     $sceneClass = OverlayImport($asset, 'SceneComponent', $engine, '/Script/CoreUObject', 'Class');
     $sceneDefault = OverlayImport($asset, 'Default__SceneComponent', $engine, '/Script/Engine', 'SceneComponent');
-    $markerClass = OverlayImport($asset, 'MarkerEmitter', $game, '/Script/CoreUObject', 'Class');
-    $markerDefault = OverlayImport($asset, 'Default__MarkerEmitter', $game, '/Script/IslandsofInsight', 'MarkerEmitter');
-    $textures = [];
-    $addedNames = [];
-    foreach ($markers as $marker) {
-        if (!isset($textures[$marker->iconAsset])) {
-            $package = '/Game/ASophia/UI/HUD/Markers/Textures/' . $marker->iconAsset;
-            $texturePackage = OverlayImport($asset, $package, 0, '/Script/CoreUObject', 'Package');
-            $textures[$marker->iconAsset] = OverlayImport($asset, $marker->iconAsset, $texturePackage, '/Script/Engine', 'Texture2D');
-            $addedNames[] = $package;
-            $addedNames[] = $marker->iconAsset;
-        }
-        array_push($addedNames, ...$marker->tags);
-    }
     $creationMethod = OverlayProperty('Enum', 'CreationMethod', 'EComponentCreationMethod::Instance');
     $creationMethod->EnumType = 'EComponentCreationMethod';
     $creationMethod->InnerType = null;
 
-    foreach ($markers as $marker) {
-        $actorIndex = count($asset->Exports) + 1;
-        $rootIndex = $actorIndex + 1;
-        $emitterIndex = $actorIndex + 2;
-        $instances = OverlayProperty('Array', 'InstanceComponents', [
-            OverlayProperty('Object', '0', $rootIndex), OverlayProperty('Object', '1', $emitterIndex),
-        ]);
-        $instances->ArrayType = 'ObjectProperty';
-        $tags = OverlayProperty('Array', 'Tags', array_map(fn(string $tag): object => OverlayProperty('Name', 'Tags', $tag), $marker->tags));
-        $tags->ArrayType = 'NameProperty';
-        $actor = OverlayExport($template, $actorIndex, $marker->actorName, $levelIndex, $actorClass, $actorDefault, [
-            OverlayProperty('Object', 'RootComponent', $rootIndex), $instances, $tags,
-        ]);
-        $actor->CreateBeforeSerializationDependencies = [$rootIndex, $emitterIndex];
-        $root = OverlayExport($template, $rootIndex, 'SaveStatsRoot', $actorIndex, $sceneClass, $sceneDefault, [
-            OverlayVector('RelativeLocation', (float)$marker->x, (float)$marker->y, (float)$marker->z),
-            clone $creationMethod,
-        ]);
-        $markerData = (object)[
-            '$type' => 'UAssetAPI.PropertyTypes.Structs.StructPropertyData, UAssetAPI',
-            'StructType' => 'LocationMarkerData', 'SerializeNone' => true, 'Name' => 'Marker',
-            'Value' => [
-                OverlayProperty('Object', 'worldTex', 0), OverlayProperty('Object', 'mapTex', $textures[$marker->iconAsset]),
-                OverlayProperty('Bool', 'VisibleOnScreen', 0), OverlayProperty('Bool', 'VisibleOnMap', $marker->visibleByDefault ? 1 : 0),
-                OverlayProperty('Bool', 'DrawNameOnMap', 0),
-                OverlayProperty('Bool', 'HideCompletionIcon', 1), OverlayProperty('Bool', 'ShowInfoPanel', 1),
-                OverlayText('MarkerName', $marker->label), OverlayText('FunctionText', ''),
-                OverlayProperty('Bool', 'SupportsFastTravel', 0),
-                OverlayProperty('Float', 'SizeMultiplier', 0.6), OverlayVector('MapWorldPositionOffset', 0, 0, 0),
-            ],
-        ];
-        $emitter = OverlayExport($template, $emitterIndex, 'SaveStatsEmitter', $actorIndex, $markerClass, $markerDefault, [$markerData, clone $creationMethod]);
-        $asset->Exports[] = $actor;
-        $asset->Exports[] = $root;
-        $asset->Exports[] = $emitter;
-        $level->Actors[] = $actorIndex;
-        $level->CreateBeforeSerializationDependencies[] = $actorIndex;
-    }
-    $asset->NameMap = array_values(array_unique(array_merge($asset->NameMap, $addedNames, [
-        'Actor', 'Default__Actor', 'Default__SceneComponent', 'Default__MarkerEmitter', 'SceneComponent', 'MarkerEmitter',
-        'RootComponent', 'InstanceComponents', 'CreationMethod', 'EComponentCreationMethod', 'EComponentCreationMethod::Instance',
-        'RelativeLocation', 'Vector', 'Marker', 'LocationMarkerData', 'worldTex', 'mapTex', 'VisibleOnScreen', 'VisibleOnMap', 'DrawNameOnMap',
-        'HideCompletionIcon', 'ShowInfoPanel', 'SizeMultiplier', 'MapWorldPositionOffset', 'SaveStatsRoot', 'SaveStatsEmitter',
-        'Tags', 'NameProperty', 'MarkerName', 'FunctionText', 'SupportsFastTravel', 'Texture2D', 'None',
+    // Pins are data in the map widget (pin_pool.php). The level gains one empty actor at the
+    // world origin: the map creates its pin emitters on it while the map is open.
+    $actorIndex = count($asset->Exports) + 1;
+    $rootIndex = $actorIndex + 1;
+    $instances = OverlayProperty('Array', 'InstanceComponents', [OverlayProperty('Object', '0', $rootIndex)]);
+    $instances->ArrayType = 'ObjectProperty';
+    $tags = OverlayProperty('Array', 'Tags', [OverlayProperty('Name', 'Tags', OVERLAY_PIN_HOST)]);
+    $tags->ArrayType = 'NameProperty';
+    $actor = OverlayExport($template, $actorIndex, OVERLAY_PIN_HOST, $levelIndex, $actorClass, $actorDefault, [OverlayProperty('Object', 'RootComponent', $rootIndex), $instances, $tags]);
+    $actor->CreateBeforeSerializationDependencies = [$rootIndex];
+    $root = OverlayExport($template, $rootIndex, 'SaveStatsRoot', $actorIndex, $sceneClass, $sceneDefault, [OverlayVector('RelativeLocation', 0, 0, 0), $creationMethod]);
+    array_push($asset->Exports, $actor, $root);
+    $level->Actors[] = $actorIndex;
+    $level->CreateBeforeSerializationDependencies[] = $actorIndex;
+    $asset->NameMap = array_values(array_unique(array_merge($asset->NameMap, [
+        'Actor', 'Default__Actor', 'Default__SceneComponent', 'SceneComponent', 'RootComponent', 'InstanceComponents',
+        'CreationMethod', 'EComponentCreationMethod', 'EComponentCreationMethod::Instance', 'RelativeLocation', 'Vector',
+        'SaveStatsRoot', 'Tags', 'NameProperty', OVERLAY_PIN_HOST, 'None',
     ])));
     return $asset;
 }
@@ -394,7 +363,7 @@ function InjectMarkersMain(array $argv): int
         if ($manifestPath !== null) {
             $manifestTemporary = tempnam(dirname($manifestPath), '.render-');
             if ($manifestTemporary === false || file_put_contents($manifestTemporary, json_encode(
-                (object)['schemaVersion' => 1, 'renderPoints' => $renderPoints, 'randomSpotHub' => OverlayRandomSpotHubTable($document)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+                (object)['schemaVersion' => 1, 'pinHost' => $renderPoints === [] ? 0 : 1, 'renderPoints' => $renderPoints, 'randomSpotHub' => OverlayRandomSpotHubTable($document)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
             )) === false) {
                 throw new RuntimeException('Cannot write render manifest.');
             }

@@ -34,7 +34,10 @@ try {
     $manifest = $directory . '/manifest.json';
     copy(OverlayTestDataPath('BaseJsons/WBP_LargeMap.json'), $input);
     file_put_contents($snapshot, json_encode((object)[
-        'schemaVersion' => 2, 'markers' => new stdClass(), 'spawnSites' => new stdClass(),
+        'schemaVersion' => 2, 'spawnSites' => new stdClass(), 'markers' => (object)array_map(static fn(array $m): object => (object)[
+            'pid' => $m[0], 'ptype' => $m[1], 'iconKey' => $m[1], 'group' => $m[2], 'label' => GetOverlayTypes()[$m[1]]['name'] . ' #' . $m[0], 'geometry' => 'point',
+            'x' => 100.0 * $m[0], 'y' => 0.0, 'z' => 0.0, 'locations' => [(object)['index' => 0, 'role' => 'anchor', 'label' => '', 'x' => 100.0 * $m[0], 'y' => 0.0, 'z' => 0.0]]],
+            ['100' => [100, 'hiddenRing', 'static'], '200' => [200, 'matchbox', 'static']]),
         'counts' => (object)['static' => (object)['remaining' => 3], 'hub' => (object)['remaining' => 5, 'unlocated' => 2], 'spawn' => (object)['sites' => 4]],
     ], JSON_THROW_ON_ERROR));
     $inputBytes = file_get_contents($input);
@@ -63,9 +66,8 @@ try {
     $generated = json_decode(file_get_contents($output), false, 512, JSON_THROW_ON_ERROR);
     $details = json_decode(file_get_contents($manifest), false, 512, JSON_THROW_ON_ERROR);
     $generatedText = file_get_contents($output);
-    CheckFilter(str_contains($generatedText, 'SSRadarIsSiteLive') && str_contains($generatedText, 'SaveStats.Site.') && str_contains($generatedText, 'SSOverlaySiteNumber')
-        && str_contains($generatedText, 'Show random-spot puzzles') && !str_contains($generatedText, 'Show possible sites'), 'Map site markers must ask the radar whether a random-spot puzzle stands on them.');
-    CheckFilter(count($details->functionNames) === 68 && count($details->checkboxNames) === 30, 'Filter manifest lost functions or controls.');
+    CheckFilter(str_contains($generatedText, 'SSRadarIsSiteLive') && str_contains($generatedText, 'Show random-spot puzzles') && !str_contains($generatedText, 'Show possible sites'), 'Map site markers must ask the radar whether a random-spot puzzle stands on them.');
+    CheckFilter(count($details->functionNames) === 64 && count($details->checkboxNames) === 30, 'Filter manifest lost functions or controls.');
     CheckFilter($details->liveProgressFunction === 'SSOverlayRefreshProgress' && $details->liveProgressBudget === 64 && $details->liveProgressIntervalSeconds === 0.25, 'Live map progress must use bounded selected-type checks.');
     CheckFilter($details->initializationFunction === 'OnInitialized' && in_array('OnInitialized', $details->functionNames, true), 'Fresh widgets must reconcile marker visibility with their displayed defaults.');
     CheckFilter($details->selectionMode === 'any-or-none' && $details->selectionMask === 'SSRadarSelectedMask' && $details->buttonNames === ['SSOverlayButtonNone', 'SSOverlayRadarRange0', 'SSOverlayRadarRange1', 'SSOverlayRadarRange2', 'SSOverlayRadarRange3', 'SSOverlayRadarSize0', 'SSOverlayRadarSize1', 'SSOverlayRadarSize2', 'SSOverlayKeysReset'] && !in_array('SSOverlayTypesAll', $details->functionNames, true), 'Selector must provide multi-type selection, clearing and radar view controls.');
@@ -82,7 +84,44 @@ try {
     }
     $zoneBytecode = json_encode($exports['SSOverlayRefreshZone']->ScriptBytecode, JSON_THROW_ON_ERROR);
     CheckFilter(str_contains($zoneBytecode, '"Path":["NameEnum"]') && str_contains($zoneBytecode, '"Path":["Map"]'), 'Zone must come from the native map selection.');
-    CheckFilter($details->zoneTagPrefix === 'SaveStats.TypeZone.' && str_contains(json_encode($exports['SSOverlayRefresh']->ScriptBytecode, JSON_THROW_ON_ERROR), '"Value":"SaveStats.TypeZone.matchbox."'), 'Map pins must be queried per selected zone.');
+    // Every local a map function's bytecode names must be one of that function's properties.
+    foreach ($generated->Exports as $n => $export) {
+        if (!str_contains($export->{'$type'} ?? '', 'FunctionExport')) { continue; }
+        $own = array_flip(array_column($export->LoadedProperties ?? [], 'Name'));
+        $missing = [];
+        $scan = static function (mixed $value) use (&$scan, &$missing, $own, $n): void {
+            if (is_object($value)) {
+                if (($value->{'$type'} ?? '') === 'UAssetAPI.Kismet.Bytecode.KismetPropertyPointer, UAssetAPI' && ($value->New->ResolvedOwner ?? null) === $n + 1) {
+                    foreach ($value->New->Path as $name) { if (!isset($own[$name])) { $missing[] = $name; } }
+                }
+                foreach ((array)$value as $child) { $scan($child); }
+            } elseif (is_array($value)) { foreach ($value as $child) { $scan($child); } }
+        };
+        $scan($export->ScriptBytecode ?? []);
+        CheckFilter($missing === [], $export->ObjectName . ' references missing locals: ' . implode(', ', array_unique($missing)));
+    }
+    // Pins are data: the refresh walks the selected types' pin groups, never the world.
+    $refreshCalls = [];
+    $walk = static function (mixed $value) use (&$walk, &$refreshCalls, $generated): void {
+        if (is_object($value)) {
+            if (isset($value->StackNode) && is_int($value->StackNode)) { $refreshCalls[] = $value->StackNode < 0 ? $generated->Imports[-1 - $value->StackNode]->ObjectName : ($generated->Exports[$value->StackNode - 1]->ObjectName ?? ''); }
+            foreach ((array)$value as $child) { $walk($child); }
+        } elseif (is_array($value)) { foreach ($value as $child) { $walk($child); } }
+    };
+    $walk($exports['SSOverlayRefresh']->ScriptBytecode);
+    CheckFilter(!in_array('GetAllActorsWithTag', $refreshCalls, true) && in_array('SSOverlaySetPin', $refreshCalls, true) && in_array('SSOverlayPinVisible', $refreshCalls, true) && in_array('SSOverlayHidePins', $refreshCalls, true),
+        'Map refresh must walk pin data and show pins through the map\'s emitters, without world searches.');
+    // Emitters are created as pins need them.
+    $setPin = json_encode($exports['SSOverlaySetPin']->ScriptBytecode, JSON_THROW_ON_ERROR);
+    $importIndex = static fn(string $name): int => -1 - array_search($name, array_column($generated->Imports, 'ObjectName'), true);
+    CheckFilter(str_contains($setPin, '"StackNode":' . $importIndex('AddComponentByClass') . ',') && str_contains($setPin, '"StackNode":' . $importIndex('FinishAddComponent') . ','),
+        'A pin with no free emitter must create one on the host.');
+    $pins = $details->pins;
+    $mapDefaults = array_column($exports['Default__WBP_LargeMap_C']->Data, null, 'Name');
+    CheckFilter($pins->count > 0 && count($mapDefaults['SSOverlayPinX']->Value) === $pins->count && count($mapDefaults['SSOverlayPinLabel']->Value) === $pins->count
+        && count($mapDefaults['SSOverlayPinGroupStart']->Value) === $pins->groups + 1 && $pins->groups === count($details->typeKeys) * $pins->zonesPerType
+        && count($mapDefaults['SSOverlayPinMembers']->Value) === $pins->members && count($mapDefaults['SSOverlayPinSlot']->Value) === $pins->count,
+        'Map must bake one entry per pin and a member list grouped by type and zone.');
     $countsIndex = array_search($exports['SSOverlayRefreshCounts'], $generated->Exports, true) + 1;
     CheckFilter(str_contains(json_encode($exports['Tick']->ScriptBytecode, JSON_THROW_ON_ERROR), '"StackNode":' . $countsIndex . ','), 'Map Tick must refresh per-zone counts.');
     $countsBytecode = json_encode($exports['SSOverlayRefreshCounts']->ScriptBytecode, JSON_THROW_ON_ERROR);
@@ -92,20 +131,19 @@ try {
     }
     $publish = json_encode($exports['SSOverlayPublishRadar']->ScriptBytecode, JSON_THROW_ON_ERROR);
     CheckFilter(str_contains($publish, '"Value":' . OverlayTypeBit('matchbox') . '}') && str_contains($publish, 'RadarSelectedMask'), 'Radar must receive the combined type mask.');
-    $refresh = json_encode($exports['SSOverlayRefresh']->ScriptBytecode, JSON_THROW_ON_ERROR);
-    CheckFilter(substr_count($refresh, '"Value":"SaveStats.Type.') === count($details->typeKeys), 'Map refresh must query every selected type.');
     $exports = array_column($generated->Exports, null, 'ObjectName');
-    CheckFilter($details->pentadRelicTag === 'SaveStats.PentadRelic' && $details->pentadVisibilityFunction === 'SSOverlayAllowsPentadActor'
-        && $details->pentadFocusField === 'SSRadarFocusPuzzleId' && $details->pentadFocusRefreshFunction === 'SSRadarRefreshPentadFocus', 'Map must use the shared native-derived Pentad focus and explicit relic identity.');
-    $pentadPredicate = array_search($exports['SSOverlayAllowsPentadActor'], $generated->Exports, true) + 1;
-    foreach (['SSOverlayRefresh', 'SSOverlayRefreshProgress'] as $name) {
-        CheckFilter(str_contains(json_encode($exports[$name]->ScriptBytecode, JSON_THROW_ON_ERROR), '"StackNode":' . $pentadPredicate . ','), 'Initial and periodic visibility must both apply the active Pentad relic predicate.');
+    // Every selected type walks its own group, and one predicate decides each pin.
+    CheckFilter(substr_count(json_encode($exports['SSOverlayRefresh']->ScriptBytecode, JSON_THROW_ON_ERROR), '"Path":["SSOverlayType_') === count($details->typeKeys), 'Map refresh must walk every selected type.');
+    $visibleCode = json_encode($exports['SSOverlayPinVisible']->ScriptBytecode, JSON_THROW_ON_ERROR);
+    foreach (['SSRadarIsSiteLive', 'SSRadarIsSolved', 'SSRadarIsPentadRelicVisible', 'SSRadarIsPuzzleAvailable'] as $query) {
+        CheckFilter(str_contains($visibleCode, '"VirtualFunctionName":"' . $query . '"'), "Pin visibility must ask the compass {$query}.");
     }
-    $availabilityPredicate = array_search($exports['SSOverlayIsActorAvailable'], $generated->Exports, true) + 1;
-    CheckFilter($details->hubAvailabilityZoneTag === 'SaveStats.HubZone.' && $details->hubAvailabilityQuery === 'SSRadarIsPuzzleAvailable', 'Map must use positively classified Hub identity and the shared availability cache.');
+    CheckFilter($details->pentadFocusField === 'SSRadarFocusPuzzleId' && str_contains($visibleCode, '"Path":["SSRadarFocusPuzzleId"]') && $details->hubAvailabilityQuery === 'SSRadarIsPuzzleAvailable',
+        'Map must use the shared native-derived Pentad focus and the shared availability cache.');
+    $visibleIndex = array_search($exports['SSOverlayPinVisible'], $generated->Exports, true) + 1;
     foreach (['SSOverlayRefresh', 'SSOverlayRefreshProgress'] as $name) {
         $bytecode = json_encode($exports[$name]->ScriptBytecode, JSON_THROW_ON_ERROR);
-        CheckFilter(str_contains($bytecode, '"StackNode":' . $availabilityPredicate . ','), 'Initial and bounded map refreshes must both use the shared availability result.');
+        CheckFilter(str_contains($bytecode, '"StackNode":' . $visibleIndex . ','), 'Initial and bounded map refreshes must both use the shared pin predicate.');
         CheckFilter(str_contains($bytecode, '"VirtualFunctionName":"SSRadarRefreshAvailability"'), 'Map availability refresh must use the shared cache before visibility reads.');
     }
     CheckFilter(!str_contains(json_encode($exports['Tick']->ScriptBytecode, JSON_THROW_ON_ERROR), '"VirtualFunctionName":"SSRadarRefreshAvailability"'), 'Native availability refresh must stay inside full refresh or quarter-second progress work.');
