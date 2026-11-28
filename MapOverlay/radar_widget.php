@@ -424,6 +424,8 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
     foreach (range(1, 5) as $relic) { $b->objectField('SSRadarPentadObject' . $relic, $b->native['Seek5HiddenObject']); }
     $b->objectField('SSRadarProgressSource', $b->native['GISProgression']);
     $b->objectField('SSRadarProgressPlayer', $b->native['SophiaCharacter']);
+    // The map widget, told to destroy its pin emitters while the map is closed.
+    $b->objectField('SSRadarMapWidget', $b->native['Object']);
     foreach (['SSRadarScanType' => -1, 'SSRadarCellX' => 2147483647, 'SSRadarCellY' => 2147483647, 'SSRadarRow' => 0, 'SSRadarMinRow' => 0, 'SSRadarMaxRow' => -1,
         'SSRadarMinCol' => 0, 'SSRadarMaxCol' => -1, 'SSRadarCursor' => 0, 'SSRadarEnd' => 0, 'SSRadarVisitedLastUpdate' => 0, 'SSRadarVisitedTotal' => 0,
         'SSRadarZoomIndex' => 1, 'SSRadarSizeIndex' => 1, 'SSRadarRevision' => 0, 'SSRadarProgressQueriesTotal' => 0,
@@ -491,7 +493,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         $b->child('TextBlock', 'SSRadarMarkerDistance' . $marker, [OverlayText('Text', ''), $font(10), FilterEnum('Justification', 'ETextJustify', 'Center'),
             FilterStruct('ColorAndOpacity', 'SlateColor', [$linear('SpecifiedColor', 0.75, 0.94, 0.97, 1)]), FilterEnum('Visibility', 'ESlateVisibility', 'Collapsed')], 108, 108, 52, 16);
     }
-    foreach (['SSRadarSetSelection', 'SSRadarSetView', 'SSRadarApplyView', 'SSRadarChangeZoom', 'SSRadarCycleSize', 'SSRadarToggleEnabled', 'SSRadarIsSolved', 'SSRadarAcknowledgeMapProgress',
+    foreach (['SSRadarSetSelection', 'SSRadarSetView', 'SSRadarApplyView', 'SSRadarChangeZoom', 'SSRadarCycleSize', 'SSRadarToggleEnabled', 'SSRadarIsSolved', 'SSRadarAcknowledgeMapProgress', 'SSRadarSetMapWidget',
         'SSRadarRefreshAvailability', 'SSRadarIsPuzzleAvailable', 'SSRadarRefreshSites', 'SSRadarSitePuzzle', 'SSRadarIsSiteLive', 'SSRadarRefreshPentadFocus', 'SSRadarIsPentadRelicVisible', 'SSRadarMatchesPentadFocus', 'SSRadarHandleShortcut', ...array_values($inputCallbacks),
         'SSRadarLoadSettings', 'SSRadarSaveSettings', 'SSRadarRegisterKeys', 'SSRadarRebind', 'SSRadarResetKeys', 'SSRadarSetHideDone', 'SSRadarApplyIcon', 'SSRadarStartScan', 'SSRadarScan', 'SSRadarRender', 'SSRadarRenderMarkers', 'SSRadarInitMaze', 'SSRadarRefreshMaze', 'SSRadarRenderMaze', 'SSRadarUpdate', 'SSRadarTick', 'OnInitialized', 'Construct', 'Destruct'] as $fn) { $b->reserve($fn); }
     $specialCompletion = AddRadarSpecialCompletion($b, $index['specialCompletions'] ?? []);
@@ -501,6 +503,7 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         $setBool('SSRadarScanActive', $bool(false)), $setBool('SSRadarDirty', $bool(true)), $visible('SSRadarCanvas', 1)];
     $revise = static fn(): object => $set('SSRadarRevision', $math('Add_IntInt', $state('SSRadarRevision'), $i(1)));
     $b->define('SSRadarAcknowledgeMapProgress', [], [], [$setBool('SSRadarMapProgressDirty', $bool(false))]);
+    $b->define('SSRadarSetMapWidget', ['Widget' => 'Object'], [], [$set('SSRadarMapWidget', FilterVariable($b->functions['SSRadarSetMapWidget'], 'Widget'))]);
     $fn = $b->functions['SSRadarIsPentadRelicVisible'];
     $p = static fn(string $n): object => FilterVariable($fn, $n);
     $relicVisible = [$unless($math('Greater_IntInt', $state('SSRadarFocusPuzzleId'), $i(0)), 'Done'),
@@ -1130,7 +1133,10 @@ function BuildRadarWidget(object $base, array $index, array $labyrinths = []): a
         $setBool('SSRadarDirty', $bool(true)), $setBool('SSRadarScanActive', $bool(false)),
         ['label' => 'SamePlayer'], $set('SSRadarProgressPlayer', $l('Player')),
         FilterExpr('LetBool', ['VariableExpression' => $l('MapVisible'), 'AssignmentExpression' => $b->method($l('Player'), 'SophiaCharacter', 'IsMapMenuVisible', [], FilterPointer($fn, 'MapVisible'))]),
-        $unless($math('Not_PreBool', $l('MapVisible')), 'MapOpen'), $setBool('SSRadarMapProgressDirty', $bool(true)), ['label' => 'MapOpen'],
+        $unless($math('Not_PreBool', $l('MapVisible')), 'MapOpen'), $setBool('SSRadarMapProgressDirty', $bool(true)),
+        $unless($b->call('KismetSystemLibrary', 'IsValid', [$state('SSRadarMapWidget')]), 'MapOpen'),
+        RadarContext($state('SSRadarMapWidget'), FilterExpr('VirtualFunction', ['VirtualFunctionName' => 'SSOverlayDropPins', 'Parameters' => []])),
+        ['label' => 'MapOpen'],
         $let('PlayerPosition', $b->method($l('Player'), 'Actor', 'K2_GetActorLocation', [], FilterPointer($fn, 'PlayerPosition'))),
         $let('PlayerRotation', $b->method($l('Player'), 'Pawn', 'GetControlRotation', [], FilterPointer($fn, 'PlayerRotation'))),
         $localCall('SSRadarUpdate', [$component('PlayerPosition', 'Vector', 'X'), $component('PlayerPosition', 'Vector', 'Y'), $component('PlayerPosition', 'Vector', 'Z'), $component('PlayerRotation', 'Rotator', 'Yaw'),

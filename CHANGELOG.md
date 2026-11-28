@@ -5,6 +5,13 @@
 - Keep your own key bindings from Settings > Controls. Registering the
   compass keys reset every game action to its default key (sprint, crouch
   and the rest), so rebinds looked saved but didn't work in play.
+- Fix a large frame-rate drop with the addon installed (reported as 60 FPS
+  falling to 20-40). Every map pin carried one of the game's map-marker
+  emitters, and the game spends time each frame on every one, hidden or not:
+  19,020 of them cost about a third of the frame rate. Pins are now data
+  inside the map. Their markers are created when the map shows them and
+  destroyed when it closes, so the game runs as fast as without the addon.
+  The package shrinks from 39 MB to 15 MB.
 - Map pin hover labels now separate their parts with hyphens instead of
   vertical bars, for example "Logic Grid #4 - Static - Location".
 

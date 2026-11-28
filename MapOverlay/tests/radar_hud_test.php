@@ -111,6 +111,8 @@ $radarExports = array_column($radar->Exports, null, 'ObjectName');
 AssertNoContextCallArguments($radar, 'Radar widget');
 $countStep = array_search($radarExports['SSRadarCountStep'], $radar->Exports, true) + 1;
 CheckRadarHud($radarExports['SSRadarTick']->ScriptBytecode[0]->StackNode === $countStep, 'The radar tick must advance the bounded count pass.');
+CheckRadarHud(isset($radarExports['SSRadarSetMapWidget']) && str_contains(json_encode($radarExports['SSRadarTick']->ScriptBytecode, JSON_THROW_ON_ERROR), '"VirtualFunctionName":"SSOverlayDropPins"'),
+    'While the map is closed the radar tick must tell the map to destroy its pin emitters.');
 $stepBytecode = json_encode($radarExports['SSRadarCountStep']->ScriptBytecode, JSON_THROW_ON_ERROR);
 CheckRadarHud(str_contains($stepBytecode, '"Path":["SSRadarCountActive"]'), 'Count step must gate Hub puzzles on the active list.');
 $arraySetCalls = 0;

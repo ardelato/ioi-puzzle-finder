@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /**
- * Map pins as data, shown through emitters the map creates as it needs them.
+ * Map pins as data, shown through emitters that exist only while the map is open.
  *
  * The game spends frame time on every MarkerEmitter that exists, hidden or not, and a level
  * full of pin actors costs load time, memory and world searches. So pins are parallel arrays
@@ -11,8 +11,9 @@ declare(strict_types=1);
  * empty host actor at the world origin (inject_markers.php). Showing a pin takes a free
  * emitter, or creates one on the host, and sets its icon, hover label and map offset from
  * the arrays; an emitter stays with its pin until the next full refresh frees them all.
- * Pins are grouped by type and zone, so a refresh walks only the selected types' pins in
- * the zone on screen.
+ * The compass tells the map when the map has closed (SSOverlayDropPins), and the map then
+ * destroys every emitter, so none is left to cost anything during play. Pins are grouped by
+ * type and zone, so a refresh walks only the selected types' pins in the zone on screen.
  */
 
 const OVERLAY_PIN_ZONES = 17;
@@ -85,10 +86,11 @@ function AddOverlayPinPool(object $asset, object $class, object $default, int $o
     }
     $native['Conv_StringToText'] ??= OverlayImport($asset, 'Conv_StringToText', $native['KismetTextLibrary'], '/Script/CoreUObject', 'Function');
     $native['Texture2D'] ??= OverlayImport($asset, 'Texture2D', $engine, '/Script/CoreUObject', 'Class');
-    // Emitters are created on the host actor at run time.
+    // Emitters are created on the host actor and destroyed again at run time.
     foreach (['AddComponentByClass', 'FinishAddComponent'] as $method) { $native[$method] ??= OverlayImport($asset, $method, $native['Actor'], '/Script/CoreUObject', 'Function'); }
+    $native['K2_DestroyComponent'] ??= OverlayImport($asset, 'K2_DestroyComponent', $native['ActorComponent'], '/Script/CoreUObject', 'Function');
     $native['Conv_VectorToTransform'] ??= OverlayImport($asset, 'Conv_VectorToTransform', $native['KismetMathLibrary'], '/Script/CoreUObject', 'Function');
-    array_push($asset->NameMap, 'AddComponentByClass', 'FinishAddComponent', 'Conv_VectorToTransform',
+    array_push($asset->NameMap, 'AddComponentByClass', 'FinishAddComponent', 'K2_DestroyComponent', 'Conv_VectorToTransform',
         'VisibleOnScreen', 'DrawNameOnMap', 'HideCompletionIcon', 'ShowInfoPanel', 'SupportsFastTravel', 'SizeMultiplier');
     // Every type icon, indexed by its number (SSIcon012 is entry 12).
     $icons = [];
@@ -184,6 +186,24 @@ function AddOverlayPinPool(object $asset, object $class, object $default, int $o
         $unless($call('Not_PreBool', [$call('IsValid', [$s('SSOverlayPinHost')])]), 'Hosted'),
         FilterExpr('LetBool', ['VariableExpression' => $s('SSOverlayPinsReady'), 'AssignmentExpression' => FilterExpr('False')]),
         ['label' => 'Hosted'], ...FilterReturn(),
+    ]);
+
+    // SSOverlayDropPins: the map has closed. Hide every pin and destroy the emitters; the next
+    // refresh creates the ones it needs. A component is destroyed through its owner, the host.
+    $fn = count($asset->Exports) + 1;
+    $l = static fn(string $n): object => FilterVariable($fn, $n);
+    $let = static fn(string $n, object $v): object => FilterExpr('Let', ['Value' => FilterPointer($fn, $n), 'Variable' => $l($n), 'Expression' => $v]);
+    $append('SSOverlayDropPins', [$field('Int', 'Index'), $field('Object', 'Emitter', 'CPF_None', $native['MarkerEmitter'])], [
+        $unless($call('Greater_IntInt', [$call('Array_Length', [$s('SSOverlayPinSlots')]), $int(0)]), 'Destroyed'),
+        FilterCall($hide, [], 'LocalFinalFunction'),
+        $let('Index', $int(0)), ['label' => 'Destroy'],
+        $unless($call('Less_IntInt', [$l('Index'), $call('Array_Length', [$s('SSOverlayPinSlots')])]), 'Cleared'),
+        $call('Array_Get', [$s('SSOverlayPinSlots'), $l('Index'), $l('Emitter')]),
+        $unless($call('IsValid', [$l('Emitter')]), 'DestroyNext'),
+        FilterContext($l('Emitter'), FilterCall($native['K2_DestroyComponent'], [$s('SSOverlayPinHost')], 'FinalFunction'), FilterVoidPointer()),
+        ['label' => 'DestroyNext'], $let('Index', $call('Add_IntInt', [$l('Index'), $int(1)])), $jump('Destroy'),
+        ['label' => 'Cleared'], $call('Array_Clear', [$s('SSOverlayPinSlots')]),
+        ['label' => 'Destroyed'], ...FilterReturn(),
     ]);
 
     // SSOverlayPinVisible: whether a pin shows, by its kind, progress, Pentad focus and availability.

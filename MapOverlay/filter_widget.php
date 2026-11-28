@@ -1408,7 +1408,9 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         FilterField($boolTemplate, 'Hovered'), FilterField($boolTemplate, 'ExpandedVisible')], FilterCompileCode([
         ...$hoverGuard,
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'CountsStepped', 'BooleanExpression' => FilterCall($native['IsValid'], [FilterVariable($classIndex, 'SSOverlayRadarState', true)])]),
-        FilterRadarMethod($classIndex, 'SSRadarCountStep'), ['label' => 'CountsStepped'],
+        FilterRadarMethod($classIndex, 'SSRadarCountStep'),
+        // The compass sees the map close and tells this widget to destroy its pin emitters.
+        FilterRadarMethod($classIndex, 'SSRadarSetMapWidget', [FilterExpr('Self')]), ['label' => 'CountsStepped'],
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Interval', 'BooleanExpression' => FilterCall($native['IsValid'], [FilterVariable($classIndex, 'SSOverlayRadarState', true)])]),
         FilterExpr('JumpIfNot', ['CodeOffset' => 0, '__target' => 'Interval', 'BooleanExpression' => FilterContext(FilterVariable($classIndex, 'SSOverlayRadarState', true), FilterVariable($native['RadarClass'], 'SSRadarMapProgressDirty', true), FilterPointer($native['RadarClass'], 'SSRadarMapProgressDirty'))]),
         FilterCall($refreshIndex, [], 'LocalFinalFunction'),
@@ -1485,7 +1487,7 @@ function AddOverlayFilters(object $base, object $document, ?array $catalog = nul
         'sourceDefaults' => ['static' => true, 'hub' => true, 'spawn' => false], 'typeKeys' => array_keys($catalog),
         'visibilityRule' => 'selected type matches AND (static OR hub OR random-spot sites enabled) AND a random-spot site holds a live unsolved puzzle of a selected type (radar SSRadarIsSiteLive) AND puzzle is not live-completed AND Pentad relic belongs to the active positive puzzle ID without positive collected proof AND verified dynamic Hub puzzle is available when native authority is ready; none selected hides every overlay marker', 'selectionMode' => 'any-or-none', 'selectionMask' => 'SSRadarSelectedMask', 'typeBits' => array_combine(array_column($typeFilters, 'key'), array_map(static fn(array $filter): int => OverlayTypeBit($filter['key']), $typeFilters)), 'nativeProperty' => 'MarkerEmitter.Marker.VisibleOnMap',
         'pins' => ['count' => count($pinData['x']), 'groups' => count($pinData['groupStart']) - 1, 'zonesPerType' => OVERLAY_PIN_ZONES, 'members' => count($pinData['members']),
-            'visibilityFunction' => 'SSOverlayPinVisible', 'setFunction' => 'SSOverlaySetPin', 'hideFunction' => 'SSOverlayHidePins', 'hostTag' => OVERLAY_PIN_HOST],
+            'visibilityFunction' => 'SSOverlayPinVisible', 'setFunction' => 'SSOverlaySetPin', 'hideFunction' => 'SSOverlayHidePins', 'dropFunction' => 'SSOverlayDropPins', 'hostTag' => OVERLAY_PIN_HOST],
         'pentadFocusField' => 'SSRadarFocusPuzzleId', 'pentadFocusRefreshFunction' => 'SSRadarRefreshPentadFocus', 'pentadVisibilityQuery' => 'SSRadarIsPentadRelicVisible',
         'hubAvailabilityQuery' => 'SSRadarIsPuzzleAvailable', 'hubAvailabilityRefreshFunction' => 'SSRadarRefreshAvailability',
         'liveProgressFunction' => 'SSOverlayRefreshProgress', 'liveProgressBudget' => 64, 'liveProgressIntervalSeconds' => 0.25, 'liveProgressQuery' => 'SSRadarIsSolved',

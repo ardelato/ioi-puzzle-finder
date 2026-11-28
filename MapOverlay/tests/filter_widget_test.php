@@ -111,11 +111,14 @@ try {
     $walk($exports['SSOverlayRefresh']->ScriptBytecode);
     CheckFilter(!in_array('GetAllActorsWithTag', $refreshCalls, true) && in_array('SSOverlaySetPin', $refreshCalls, true) && in_array('SSOverlayPinVisible', $refreshCalls, true) && in_array('SSOverlayHidePins', $refreshCalls, true),
         'Map refresh must walk pin data and show pins through the map\'s emitters, without world searches.');
-    // Emitters are created as pins need them.
+    // Emitters exist only while the map is open: created as pins need them, destroyed on close.
     $setPin = json_encode($exports['SSOverlaySetPin']->ScriptBytecode, JSON_THROW_ON_ERROR);
+    $dropPins = json_encode($exports['SSOverlayDropPins']->ScriptBytecode, JSON_THROW_ON_ERROR);
     $importIndex = static fn(string $name): int => -1 - array_search($name, array_column($generated->Imports, 'ObjectName'), true);
     CheckFilter(str_contains($setPin, '"StackNode":' . $importIndex('AddComponentByClass') . ',') && str_contains($setPin, '"StackNode":' . $importIndex('FinishAddComponent') . ','),
         'A pin with no free emitter must create one on the host.');
+    CheckFilter(str_contains($dropPins, '"StackNode":' . $importIndex('K2_DestroyComponent') . ','), 'Closing the map must destroy the pin emitters.');
+    CheckFilter(str_contains(json_encode($exports['Tick']->ScriptBytecode, JSON_THROW_ON_ERROR), '"VirtualFunctionName":"SSRadarSetMapWidget"'), 'The map must give itself to the compass, which reports the map closing.');
     $pins = $details->pins;
     $mapDefaults = array_column($exports['Default__WBP_LargeMap_C']->Data, null, 'Name');
     CheckFilter($pins->count > 0 && count($mapDefaults['SSOverlayPinX']->Value) === $pins->count && count($mapDefaults['SSOverlayPinLabel']->Value) === $pins->count
