@@ -84,7 +84,7 @@ CheckOverlay($fields['VisibleOnMap'] === 0 && $fields['ShowInfoPanel'] === 1 && 
 CheckOverlay($fields['SupportsFastTravel'] === 0, 'Snapshot marker must not support fast travel.');
 $textFields = array_column($emitter->Data[0]->Value, null, 'Name');
 CheckOverlay($textFields['MarkerName']->{'$type'} === 'UAssetAPI.PropertyTypes.Objects.TextPropertyData, UAssetAPI', 'Hover name must serialize as FText.');
-CheckOverlay(str_contains($textFields['MarkerName']->CultureInvariantString, '#100 | Static | Point 1'), 'Hover name lacks puzzle, source, or point label.');
+CheckOverlay(str_contains($textFields['MarkerName']->CultureInvariantString, '#100 - Static - Point 1'), 'Hover name lacks puzzle, source, or point label.');
 CheckOverlay($textFields['FunctionText']->CultureInvariantString === '', 'Snapshot marker should not advertise a click action.');
 $actorFields = array_column($actor->Data, null, 'Name');
 CheckOverlay(array_column($actorFields['Tags']->Value, 'Value') === ['SaveStatsOverlay', 'SaveStats.Source.static', 'SaveStats.Puzzle.100', 'SaveStats.Type.hiddenRing'], 'Actor filter and live-completion identity tags are incorrect.');
@@ -159,7 +159,7 @@ CheckOverlay(OverlayRandomSpotHubTable($unlocatedDocument) === [['pid' => 7, 'pt
 CheckOverlay(count(ExpandOverlayMarkers($multi, 1)) === 2, 'Smoke limit must bound puzzle records and spawn sites separately.');
 $ordinary = unserialize(serialize($document));
 $ordinary->markers->{'100'}->locations[0]->label = '';
-CheckOverlay(str_ends_with(ExpandOverlayMarkers($ordinary)[0]->label, '| Location'), 'Single-point hover should supply a useful location label.');
+CheckOverlay(str_ends_with(ExpandOverlayMarkers($ordinary)[0]->label, '- Location'), 'Single-point hover should supply a useful location label.');
 $multiResult = InjectOverlayMarkers($base, $multi);
 foreach (array_slice($multiResult->Exports, count($base->Exports)) as $newExport) {
     if (!str_starts_with($newExport->ObjectName, 'SaveStatsMarker_300_') && !str_starts_with($newExport->ObjectName, 'SaveStatsMarker_400_')) { continue; }

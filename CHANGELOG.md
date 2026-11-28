@@ -5,6 +5,8 @@
 - Keep your own key bindings from Settings > Controls. Registering the
   compass keys reset every game action to its default key (sprint, crouch
   and the rest), so rebinds looked saved but didn't work in play.
+- Map pin hover labels now separate their parts with hyphens instead of
+  vertical bars, for example "Logic Grid #4 - Static - Location".
 
 ## 0.2.0 (2026-11-25)
 

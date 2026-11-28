@@ -129,7 +129,7 @@ function ExpandOverlayMarkers(object $document, ?int $limit = null): array
             }
             foreach ($locations as $point) {
                 $pointLabel = $point->label !== '' ? $point->label : ($site ? 'Container' : 'Location');
-                $label = $record->label . ' | ' . ($site ? 'Shown only while a random-spot puzzle is here' : ucfirst($record->group)) . ' | ' . $pointLabel;
+                $label = $record->label . ' - ' . ($site ? 'Shown only while a random-spot puzzle is here' : ucfirst($record->group)) . ' - ' . $pointLabel;
                 $renderPoint = (object)[
                     'actorName' => $prefix . '_' . $point->index,
                     'ptype' => $record->ptype, 'group' => $record->group, 'iconKey' => $record->iconKey,
