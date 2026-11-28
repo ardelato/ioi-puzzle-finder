@@ -56,9 +56,21 @@ function AddRadarSettingsFunctions(RadarWidgetBuilder $b, array $actions): void
             ['label' => 'Add' . $action], $let('InputMapping', $state('SSRadarKey' . $action)),
             $b->method($l('Settings'), 'InputSettings', 'AddActionMapping', [$l('InputMapping'), $bool(false)])];
     }
-    $code = [...$code, $b->method($l('Settings'), 'InputSettings', 'ForceRebuildKeymaps'), ['label' => 'Done']];
-    $b->define('SSRadarRegisterKeys', [], ['Settings' => 'Object', 'Mappings' => 'Array', 'InputMapping' => 'Struct', 'Cursor' => 'Int'], $code);
+    // ForceRebuildKeymaps resets every PlayerInput to the project defaults, which drops the
+    // player's own rebinds (Settings > Controls, kept by AutoSettings). Re-apply them on top
+    // of the new defaults, which now include the radar actions.
+    $b->native['AutoSettingsInput'] ??= OverlayImport($b->asset, '/Script/AutoSettingsInput', 0, '/Script/CoreUObject', 'Package');
+    $b->native['InputMappingManager'] ??= OverlayImport($b->asset, 'InputMappingManager', $b->native['AutoSettingsInput'], '/Script/CoreUObject', 'Class');
+    $code = [...$code, $b->method($l('Settings'), 'InputSettings', 'ForceRebuildKeymaps'),
+        $let('Controller', $b->call('GameplayStatics', 'GetPlayerController', [FilterExpr('Self'), $i(0)])),
+        $unless($valid($l('Controller')), 'Done'),
+        FilterExpr('LetBool', ['VariableExpression' => $l('Reapplied'), 'AssignmentExpression' => $b->call('InputMappingManager', 'InitializePlayerInputOverridesStatic', [$l('Controller')])]),
+        ['label' => 'Done']];
+    $b->define('SSRadarRegisterKeys', [], ['Settings' => 'Object', 'Mappings' => 'Array', 'InputMapping' => 'Struct', 'Cursor' => 'Int', 'Controller' => 'Object', 'Reapplied' => 'Bool'], $code);
     $mappingsInner('SSRadarRegisterKeys');
+    foreach ($b->asset->Exports[$b->functions['SSRadarRegisterKeys'] - 1]->LoadedProperties as $property) {
+        if ($property->Name === 'Controller') { $property->PropertyClass = $b->native['PlayerController']; }
+    }
 
     [$l, $let] = $locals($b->functions['SSRadarSaveSettings']);
     $code = [$let('Store', FilterExpr('DynamicCast', ['ClassPtr' => $settings, 'TargetExpression' => $b->call('GameplayStatics', 'CreateSaveGameObject', [FilterExpr('ObjectConst', ['Value' => $settings])])])),

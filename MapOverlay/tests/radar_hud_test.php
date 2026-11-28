@@ -191,8 +191,12 @@ $callsTo = static function (string $function) use ($radarExports, $eachCall): ar
     return $calls;
 };
 $register = $callsTo('SSRadarRegisterKeys');
-CheckRadarHud(($register['GetActionMappingByName'] ?? 0) === 4 && ($register['RemoveActionMapping'] ?? 0) === 4 && ($register['AddActionMapping'] ?? 0) === 4 && ($register['ForceRebuildKeymaps'] ?? 0) === 1,
-    'Key registration must clear stale mappings of every radar action before adding its current key, then rebuild once.');
+CheckRadarHud(($register['GetActionMappingByName'] ?? 0) === 4 && ($register['RemoveActionMapping'] ?? 0) === 4 && ($register['AddActionMapping'] ?? 0) === 4 && ($register['ForceRebuildKeymaps'] ?? 0) === 1
+    && ($register['GetPlayerController'] ?? 0) === 1 && ($register['InitializePlayerInputOverridesStatic'] ?? 0) === 1,
+    'Key registration must clear stale mappings of every radar action before adding its current key, rebuild once, then re-apply the player\'s own rebinds.');
+$autoSettings = array_values(array_filter($radar->Imports, static fn(object $import): bool => $import->ObjectName === 'InputMappingManager'));
+CheckRadarHud(count($autoSettings) === 1 && $radar->Imports[-1 - $autoSettings[0]->OuterIndex]->ObjectName === '/Script/AutoSettingsInput',
+    'The player-rebind refresh must call AutoSettings\' InputMappingManager.');
 $construct = $codeOf('Construct');
 CheckRadarHud(str_contains($construct, '"StackNode":' . $exportIndex('SSRadarRegisterKeys') . ',') && !str_contains($construct, 'AddActionMapping') && substr_count($construct, '"FunctionName":"SSRadarInput') === 4, 'Construct must register the current keys and listen for every action.');
 $rebind = $radarExports['SSRadarRebind'];
